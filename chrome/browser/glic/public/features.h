@@ -195,6 +195,7 @@ BASE_DECLARE_FEATURE(kGlicKeyboardPrint);
 
 BASE_DECLARE_FEATURE(kGlicPasteEligibilityCheck);
 BASE_DECLARE_FEATURE(kGlicWebPasteEligibilityCheck);
+BASE_DECLARE_FEATURE(kGlicCrossProfileTransfer);
 
 BASE_DECLARE_FEATURE(kGlicTabGroups);
 BASE_DECLARE_FEATURE(kGlicSparkSettingsAccessibleLabels);
@@ -267,6 +268,8 @@ BASE_DECLARE_FEATURE(kGlicRecordPeriodicInstanceCountMetrics);
 BASE_DECLARE_FEATURE(kGlicWhatsNewLuminous);
 BASE_DECLARE_FEATURE(kGlicBrowserCommandFallback);
 BASE_DECLARE_FEATURE_PARAM(std::string, kGlicBrowserCommandFallbackUrl);
+
+BASE_DECLARE_FEATURE(kGlicWhatsNewQuizzes);
 
 // Test only. When enabled, Android drops incoming Glic experimental triggering
 // TriggerActuationRequest messages without replying or acking, as if the FCM

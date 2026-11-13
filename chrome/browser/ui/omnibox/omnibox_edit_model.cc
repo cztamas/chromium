@@ -84,6 +84,7 @@
 #include "components/omnibox/browser/search_provider.h"
 #include "components/omnibox/browser/searchbox_utils.h"
 #include "components/omnibox/browser/vector_icons.h"  // nogncheck
+#include "components/omnibox/common/composebox_features.h"
 #include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
@@ -692,6 +693,30 @@ void OmniboxEditModel::Revert() {
   controller_->client()->OnRevert();
 }
 
+void OmniboxEditModel::RevertUneditedText() {
+  // Keyword mode is an uncommitted draft even when the user text is empty,
+  // e.g. on the NTP after entering keyword mode via the keyword chip, so
+  // reverting unedited text should never exit keyword mode (see
+  // `OmniboxViewViews::OnBlur()`).
+  if (is_keyword_selected()) {
+    return;
+  }
+
+  // If the view is showing text that's not user-text, revert the text to the
+  // permanent display text. This usually occurs if Steady State Elisions is on
+  // and the user has unelided, but not edited the URL.
+  // Also revert if the text has been edited but currently exactly matches
+  // the permanent text. An example of this scenario is someone typing on the
+  // new tab page and then deleting everything using backspace/delete.
+  if ((!user_input_in_progress() &&
+       user_text() != GetPermanentDisplayText()) ||
+      (user_input_in_progress() &&
+       (user_text() == GetPermanentDisplayText() ||
+        user_text() == controller_->client()->GetFormattedFullURL()))) {
+    Revert();
+  }
+}
+
 void OmniboxEditModel::StartAutocomplete(bool prevent_inline_autocomplete) {
   const std::u16string input_text = MaybePrependKeyword(user_text_);
 
@@ -800,6 +825,7 @@ void OmniboxEditModel::EnterKeywordModeForDefaultSearchProvider(
 }
 
 void OmniboxEditModel::OpenComposeboxForAskG() {
+  enter_aim_mode_ = false;
   PopulateActiveTabContext();
   controller_->popup_state_manager()->SetPopupState(OmniboxPopupState::kAim);
 }
@@ -864,6 +890,10 @@ void OmniboxEditModel::OpenAiMode(AimActivation activation) {
   }
 
   if (ShouldOpenAimPopup(activation, current_match.type)) {
+    // The AI Mode button opens the compose box in AI Mode; the "+" menu
+    // doesn't.
+    enter_aim_mode_ = activation != AimActivation::kContextMenu &&
+                      omnibox::IsDynamicAimFulfillmentEnabledForOmnibox();
     controller_->popup_state_manager()->SetPopupState(OmniboxPopupState::kAim);
     return;
   }
@@ -3086,11 +3116,18 @@ void OmniboxEditModel::SetFocusState(OmniboxFocusState state,
     return;
   }
 
-  // Update state and notify view if the omnibox caret visibility changed.
+  // Update state and notify view if the omnibox focus or caret visibility
+  // changed.
+  const bool had_focus = has_focus();
   const bool was_caret_visible = is_caret_visible();
   focus_state_ = state;
-  if (is_caret_visible() != was_caret_visible && view_) {
-    view_->ApplyCaretVisibility();
+  if (view_) {
+    if (has_focus() != had_focus) {
+      view_->OnFocusChanged();
+    }
+    if (is_caret_visible() != was_caret_visible) {
+      view_->ApplyCaretVisibility();
+    }
   }
 
   controller_->client()->OnFocusChanged(focus_state_, reason);

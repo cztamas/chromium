@@ -9,6 +9,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -150,6 +151,7 @@
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/blink/public/common/loader/url_loader_throttle.h"
+#include "third_party/blink/public/common/renderer_preferences/renderer_preferences.h"
 #include "third_party/blink/public/common/storage_key/storage_key.h"
 #include "third_party/blink/public/common/switches.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
@@ -225,7 +227,11 @@
 #include "chromeos/ash/components/dbus/debug_daemon/debug_daemon_client.h"
 #include "chromeos/components/kiosk/kiosk_test_utils.h"
 #include "chromeos/components/kiosk/kiosk_utils.h"
+#include "components/metrics/metrics_state_manager.h"
+#include "components/metrics/startup_visibility.h"
+#include "components/metrics/test/test_enabled_state_provider.h"
 #include "components/user_manager/scoped_user_manager.h"
+#include "components/variations/service/test_variations_service.h"
 #include "content/public/test/scoped_web_ui_controller_factory_registration.h"
 #include "google_apis/api_key_cache.h"
 #include "google_apis/default_api_keys.h"
@@ -1381,11 +1387,24 @@ TEST_F(ChromeContentSettingsRedirectTest, RedirectGalleryURL) {
 }
 
 TEST_F(ChromeContentSettingsRedirectTest, RedirectGuestGalleryURL) {
+  metrics::TestEnabledStateProvider metrics_enabled_state_provider(
+      /*consent=*/false, /*enabled=*/false);
+  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager =
+      metrics::MetricsStateManager::Create(
+          TestingBrowserProcess::GetGlobal()->local_state(),
+          &metrics_enabled_state_provider,
+          /*backup_registry_key=*/std::wstring(),
+          /*user_data_dir=*/base::FilePath(),
+          metrics::StartupVisibility::kUnknown);
+  variations::TestVariationsService variations_service(
+      TestingBrowserProcess::GetGlobal()->local_state(),
+      metrics_state_manager.get());
   content::ScopedWebUIConfigRegistration registration(
       std::make_unique<MediaAppGuestUIConfig>(
           TestingBrowserProcess::GetGlobal()
               ->GetFeatures()
-              ->application_locale_storage()));
+              ->application_locale_storage(),
+          &variations_service));
   TestChromeContentBrowserClient test_content_browser_client;
   const GURL gallery_url(ash::kChromeUIMediaAppGuestURL);
   GURL dest_url = gallery_url;
@@ -2554,6 +2573,30 @@ TEST_F(ChromeContentBrowserClientTest,
       future.GetCallback());
   EXPECT_FALSE(future.Get<0>());
   EXPECT_EQ(top_chrome_webui_profile->UniqueId(), future.Get<1>());
+}
+
+// Tests that UpdateRendererPreferencesForWorker() skips updating renderer
+// preferences for TopChromeWebUIProfile, which does not have the user
+// preferences that UpdateFromSystemSettings() depends on.
+TEST_F(ChromeContentBrowserClientTest,
+       TopChromeWebUIProfileUpdateRendererPreferencesForWorker) {
+  // Enable Do Not Track for the regular user profile.
+  profile()->GetPrefs()->SetBoolean(prefs::kEnableDoNotTrack, true);
+
+  webui::ScopedTopChromeWebUIProfileForTesting scoped_profile;
+  Profile* top_chrome_webui_profile = webui::GetTopChromeWebUIProfile();
+  ASSERT_TRUE(top_chrome_webui_profile);
+
+  ChromeContentBrowserClient client;
+  blink::RendererPreferences top_chrome_prefs;
+  client.UpdateRendererPreferencesForWorker(top_chrome_webui_profile,
+                                            &top_chrome_prefs);
+  EXPECT_FALSE(top_chrome_prefs.enable_do_not_track);
+
+  // Test a regular user profile still has its preferences updated.
+  blink::RendererPreferences user_prefs;
+  client.UpdateRendererPreferencesForWorker(profile(), &user_prefs);
+  EXPECT_TRUE(user_prefs.enable_do_not_track);
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 

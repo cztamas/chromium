@@ -62,6 +62,7 @@
 #include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_next_features.h"
 #include "chrome/browser/ui/omnibox/omnibox_popup_state_manager.h"
+#include "chrome/browser/ui/omnibox/omnibox_popup_view.h"
 #include "chrome/browser/ui/tabs/organizer/organizer_panel_controller.h"
 #include "chrome/browser/ui/tabs/organizer/organizer_panel_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -84,6 +85,7 @@
 #include "chrome/browser/ui/views/omnibox/full_webui_omnibox_frame.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_context_menu_mixin.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_aim_presenter.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_popup_host.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_base.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_delegate.h"
@@ -351,10 +353,10 @@ class FullWebUIOmniboxInteractiveTestBase
       }
       auto* popup_view = static_cast<OmniboxPopupViewWebUI*>(
           browser_view->GetLocationBar()->GetOmniboxPopupView());
-      if (!popup_view || !popup_view->presenter()) {
+      if (!popup_view || !popup_view->popup_host()) {
         return nullptr;
       }
-      return popup_view->presenter()->GetWebUIContent();
+      return popup_view->popup_host()->GetWebUIContent();
     });
   }
 
@@ -1024,10 +1026,12 @@ class FullWebUIOmniboxInteractiveTestBase
   static views::Widget* GetPopupWidget(BrowserWindowInterface* target_browser) {
     auto* view = BrowserView::GetBrowserViewForBrowser(target_browser);
     auto* location_bar = view ? view->GetLocationBar() : nullptr;
-    auto* popup_view =
+    OmniboxPopupView* popup_view =
         location_bar ? location_bar->GetOmniboxPopupView() : nullptr;
-    auto* presenter = popup_view ? popup_view->presenter() : nullptr;
-    return presenter ? presenter->GetWidget() : nullptr;
+    OmniboxPopupHost* host = popup_view ? popup_view->popup_host() : nullptr;
+    OmniboxPopupWebUIBaseContent* content =
+        host ? host->GetWebUIContent() : nullptr;
+    return content ? content->GetWidget() : nullptr;
   }
 
   // Waits until the popup widget is hidden and the edit model has released
@@ -1552,8 +1556,8 @@ class FullWebUIOmniboxInteractiveTest
     auto* popup_view = BrowserWindow::FromBrowser(browser())
                            ->GetLocationBar()
                            ->GetOmniboxPopupView();
-    auto* presenter = popup_view ? popup_view->presenter() : nullptr;
-    return presenter ? presenter->GetWebUIContent() : nullptr;
+    auto* host = popup_view ? popup_view->popup_host() : nullptr;
+    return host ? host->GetWebUIContent() : nullptr;
   }
 
   // Selects `[start, end)` in the WebUI input and waits for the WebUI to
@@ -2010,7 +2014,7 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
         const gfx::Rect location_bar_bounds = location_bar->BoundsInScreen();
         auto* popup_view = static_cast<OmniboxPopupViewWebUI*>(
             location_bar->GetOmniboxPopupView());
-        auto* webui = popup_view->presenter()->GetWebUIContent();
+        auto* webui = popup_view->popup_host()->GetWebUIContent();
         content::EvalJsResult result =
             content::EvalJs(webui->GetWebContents(), R"(
               const r = document.querySelector('omnibox-full-app')
@@ -3123,8 +3127,8 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest, TabSwitchKeepsPopup) {
             auto* popup_view = BrowserWindow::FromBrowser(browser())
                                    ->GetLocationBar()
                                    ->GetOmniboxPopupView();
-            return popup_view->presenter() &&
-                   popup_view->presenter()->IsShown();
+            return popup_view->popup_host() &&
+                   popup_view->popup_host()->IsShown();
           },
           true, "PopupIsShown"));
 }
@@ -3171,8 +3175,8 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest, NewTabKeepsPopup) {
             auto* popup_view = BrowserWindow::FromBrowser(browser())
                                    ->GetLocationBar()
                                    ->GetOmniboxPopupView();
-            return popup_view->presenter() &&
-                   popup_view->presenter()->IsShown();
+            return popup_view->popup_host() &&
+                   popup_view->popup_host()->IsShown();
           },
           true, "PopupIsShown"));
 }
@@ -3699,8 +3703,10 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
 // Verifies that leaving fullscreen closes a popup kept open for a draft typed
 // in fullscreen, keeping the draft, and reopens it unfocused once the
 // transition completes.
-IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
-                       ExitingFullscreenHidesDraftPopupTypedInFullscreen) {
+// TODO(crbug.com/585293340): Flaky on Mac.
+IN_PROC_BROWSER_TEST_P(
+    FullWebUIOmniboxInteractiveTest,
+    DISABLED_ExitingFullscreenHidesDraftPopupTypedInFullscreen) {
   if (IsWebUIToolbarEnabled()) {
     GTEST_SKIP() << "TODO(b/577150359): With the WebUI toolbar, the popup "
                     "isn't closed in fullscreen or reopened after.";
@@ -5548,8 +5554,8 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
             BrowserWindow::FromBrowser(browser())
                 ->GetLocationBar()
                 ->GetOmniboxPopupView());
-        CHECK(popup_view && popup_view->presenter());
-        auto* base_content = popup_view->presenter()->GetWebUIContent();
+        CHECK(popup_view && popup_view->popup_host());
+        auto* base_content = popup_view->popup_host()->GetWebUIContent();
         CHECK(base_content);
         base_content->AdvanceFocus(/*reverse=*/false);
       }),
@@ -5642,8 +5648,8 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
         auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
         auto* popup_view = static_cast<OmniboxPopupViewWebUI*>(
             browser_view->GetLocationBar()->GetOmniboxPopupView());
-        CHECK(popup_view && popup_view->presenter());
-        auto* base_content = popup_view->presenter()->GetWebUIContent();
+        CHECK(popup_view && popup_view->popup_host());
+        auto* base_content = popup_view->popup_host()->GetWebUIContent();
         CHECK(base_content);
         base_content->AdvanceFocus(/*reverse=*/true);
       }),
@@ -6246,8 +6252,9 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
 // Verifies that tab fullscreen, which hides the toolbar, keeps a popup closed
 // for an unfocused draft, keeping the draft, and that the popup reopens
 // unfocused once tab fullscreen exits.
+// TODO(crbug.com/585294336): Flaky on Mac.
 IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
-                       TabFullscreenKeepsDraftPopupClosedUntilExit) {
+                       DISABLED_TabFullscreenKeepsDraftPopupClosedUntilExit) {
   if (IsWebUIToolbarEnabled()) {
     GTEST_SKIP() << "TODO(b/577150359): With the WebUI toolbar, the popup "
                     "isn't closed in fullscreen or reopened after.";
@@ -6431,6 +6438,84 @@ IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
       SwitchTab(kTabStripElementId, 2), WaitForPopupActive(),
       WaitForPopupTransitionLockout(), WaitForPopupActive());
 }
+
+#if defined(USE_AURA)
+// Verifies that right-clicking the page while the omnibox is focused on the New
+// Tab Page blurs the omnibox and focuses the page, as with the Views omnibox on
+// Aura, and that the browser window keeps activation while the page's context
+// menu is shown. If the popup took activation back before the menu was shown, a
+// click on a menu item (e.g. "Inspect") would reactivate the browser window and
+// cancel the menu before its command ran. See b/580819291.
+IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
+                       RightClickPageOnNtpBlursOmniboxAndKeepsContextMenu) {
+  auto is_browser_widget_active = [this]() {
+    return BrowserView::GetBrowserViewForBrowser(browser())
+        ->GetWidget()
+        ->IsActive();
+  };
+  auto is_page_focused = [this]() {
+    auto* browser_view = BrowserView::GetBrowserViewForBrowser(browser());
+    return browser_view->GetFocusManager()->GetFocusedView() ==
+           browser_view->GetActiveContentsWebView();
+  };
+  RunTestSequence(
+      FocusOmniboxOnInitialNtp(kTab1), WaitForPopupActive(),
+      MoveMouseTo(ContentsWebView::kContentsWebViewElementId,
+                  base::BindOnce([](ui::TrackedElement* el) {
+                    const gfx::Rect bounds = el->GetScreenBounds();
+                    return gfx::Point(bounds.x() + 20, bounds.bottom() - 20);
+                  })),
+      ClickMouse(ui_controls::RIGHT),
+      PollUntil([]() { return !!views::MenuController::GetActiveInstance(); },
+                "WaitForPageContextMenuShown"),
+      // The omnibox is blurred, and with no draft the popup closes.
+      WaitForPopupDismissed(), WaitForPopupState(OmniboxPopupState::kNone),
+      // Let any queued focus request for the popup run.
+      WaitForPopupTransitionLockout(),
+      CheckResult([]() { return !!views::MenuController::GetActiveInstance(); },
+                  true, "PageContextMenuStillShown"),
+      CheckResult(is_browser_widget_active, true, "BrowserWidgetActive"),
+      CheckEditModelFocus(false), CheckNativeOmniboxViewUnfocused(),
+      CheckResult(is_page_focused, true, "PageFocused"), Do([]() {
+        views::MenuController::GetActiveInstance()->Cancel(
+            views::MenuController::ExitType::kAll);
+      }),
+      PollUntil([]() { return !views::MenuController::GetActiveInstance(); },
+                "WaitForPageContextMenuClosed"),
+      // Closing the menu leaves the page focused, with the omnibox blurred.
+      WaitForPopupTransitionLockout(),
+      CheckResult(is_browser_widget_active, true,
+                  "BrowserWidgetActiveAfterMenu"),
+      CheckEditModelFocus(false), CheckPopupState(OmniboxPopupState::kNone),
+      CheckResult(is_page_focused, true, "PageFocusedAfterMenu"));
+}
+
+// Verifies that right-clicking the page with an omnibox draft blurs the
+// omnibox, while the draft keeps the popup open, as a left-click does.
+IN_PROC_BROWSER_TEST_P(FullWebUIOmniboxInteractiveTest,
+                       RightClickPageWithDraftBlursOmniboxAndKeepsDraft) {
+  RunTestSequence(
+      OpenInitialTabAndFocusOmnibox(kTab1, GURL("chrome://version/")),
+      InputWebUIText("draft"), CheckUserInputInProgress(true),
+      MoveMouseTo(ContentsWebView::kContentsWebViewElementId,
+                  base::BindOnce([](ui::TrackedElement* el) {
+                    const gfx::Rect bounds = el->GetScreenBounds();
+                    return gfx::Point(bounds.x() + 20, bounds.bottom() - 20);
+                  })),
+      ClickMouse(ui_controls::RIGHT),
+      PollUntil([]() { return !!views::MenuController::GetActiveInstance(); },
+                "WaitForPageContextMenuShown"),
+      WaitForVisibleOmniboxUnfocused(),
+      WaitForPopupState(OmniboxPopupState::kFull),
+      CheckUserInputInProgress(true), Do([]() {
+        views::MenuController::GetActiveInstance()->Cancel(
+            views::MenuController::ExitType::kAll);
+      }),
+      PollUntil([]() { return !views::MenuController::GetActiveInstance(); },
+                "WaitForPageContextMenuClosed"),
+      WaitForWebUIInputValue("draft"));
+}
+#endif  // defined(USE_AURA)
 
 // Fixture for walking the elements of the Full WebUI omnibox popup with Tab and
 // Shift+Tab. With the history seeded in `SetUpOnMainThread()`, typing "title2"

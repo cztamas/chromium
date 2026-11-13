@@ -191,6 +191,18 @@ targets.mixin(
 )
 
 targets.mixin(
+    name = "chrome-redfin-fleet-pool",
+    swarming = targets.swarming(
+        dimensions = {
+            "device_type": "redfin",
+            "device_os": "T",
+            "pool": "chrome.tests",
+            "os": "Android",
+        },
+    ),
+)
+
+targets.mixin(
     name = "chrome-swarming-pool",
     swarming = targets.swarming(
         dimensions = {
@@ -284,6 +296,23 @@ targets.mixin(
             "chromeos/tast_control_flaky_tests.txt",
         ],
         cros_test_max_in_shard = 20,
+    ),
+)
+
+targets.mixin(
+    name = "chrome_ai_wpt_component_cache",
+    swarming = targets.swarming(
+        optional_dimensions = {
+            60: {
+                "caches": "chrome_ai_wpt_components",
+            },
+        },
+        named_caches = [
+            swarming.cache(
+                name = "chrome_ai_wpt_components",
+                path = "chrome_ai_wpt_components",
+            ),
+        ],
     ),
 )
 
@@ -1355,6 +1384,34 @@ targets.mixin(
     ),
 )
 
+# Expands Windows AMD non-WPT optimization_guide suites across discrete high
+# performance cards (RX 5500 XT on Win10 and RX 9070 XT on Win11) while
+# excluding lower performance integrated AMD APUs (1002:1638 and 1002:164e).
+targets.mixin(
+    name = "win_high_perf_amd_gpu",
+    swarming = targets.swarming(
+        dimensions = {
+            "cpu": "x86-64",
+            "gpu": "1002:7340|1002:7550",
+            "os": "Windows",
+        },
+    ),
+)
+
+# Expands Windows NVIDIA non-WPT optimization_guide suites across high
+# performance cards (GTX 1660 on Win10 plus RTX 4070 and RTX 5070 on Win11)
+# while excluding lower performance cards (for example 10de:2507 RTX 3050).
+targets.mixin(
+    name = "win_high_perf_nvidia_gpu",
+    swarming = targets.swarming(
+        dimensions = {
+            "cpu": "x86-64",
+            "gpu": "10de:2184|10de:2783|10de:2f04",
+            "os": "Windows",
+        },
+    ),
+)
+
 targets.mixin(
     name = "linux_amd_780m_experimental",
     swarming = targets.swarming(
@@ -2355,8 +2412,8 @@ targets.mixin(
     swarming = targets.swarming(
         dimensions = {
             "display_attached": "1",
-            "gpu": "10de:2184-31.0.15.4601|10de:2184-32.0.16.1074",
-            "os": "Windows-10-19045|Windows-11-26200",
+            "gpu": "10de:2184-32.0.16.1074",
+            "os": "Windows-11-26200",
             "pool": "chromium.tests.gpu",
         },
     ),

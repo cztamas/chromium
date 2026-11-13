@@ -18,7 +18,6 @@ COVERED_FILES = [
     'deploy_to_fuchsia.py',
     'flash_device.py',
     'log_manager.py',
-    'provision_starview.py',
     'publish_package.py',
     'serve_repo.py',
 ]
@@ -33,6 +32,7 @@ TESTED_FILES = [
     'monitors.py',
     'orchestrate_runner.py',
     'run_executable_test.py',
+    'run_test.py',
     'serial_boot_device.py',
     'test_env_setup.py',
     'version.py',

@@ -217,12 +217,11 @@ public class GlicLoadingPlaceholderViewUnitTest {
         AtomicInteger closeClicks = new AtomicInteger();
 
         View bottomSheetPlaceholder =
-                new GlicBottomSheetComponentProvider(mProfile, /* nativeCoordinator= */ null)
+                new GlicBottomSheetComponentProvider(mProfile, /* nativeCoBrowseViews= */ null)
                         .createLoadingPlaceholderView(
                                 mContext,
                                 TEST_BG_COLOR,
                                 TEST_ELEM_COLOR,
-                                /* isSidePanel= */ false,
                                 closeClicks::incrementAndGet);
         assertTrue(bottomSheetPlaceholder instanceof GlicLoadingPlaceholderView);
         ((GlicLoadingPlaceholderView) bottomSheetPlaceholder)
@@ -236,7 +235,6 @@ public class GlicLoadingPlaceholderViewUnitTest {
                                 mContext,
                                 TEST_BG_COLOR,
                                 TEST_ELEM_COLOR,
-                                /* isSidePanel= */ true,
                                 closeClicks::incrementAndGet);
         assertTrue(sidePanelPlaceholder instanceof GlicLoadingPlaceholderView);
         ((GlicLoadingPlaceholderView) sidePanelPlaceholder)

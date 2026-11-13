@@ -1249,6 +1249,7 @@ if (is_win || is_mac || is_linux) {
         "//chrome/updater/mac:ksadmin_test",
         "//chrome/updater/mac:updater_bundle_test",
         "//chrome/updater/mac/client_lib/test_helpers/app_bundle:registration_test_app_bundle",
+        "//chrome/updater/test/quarantine_enabled_app",
       ]
 
       if (target_cpu == "arm64") {
@@ -1295,10 +1296,15 @@ if (is_win || is_mac || is_linux) {
     if (is_posix) {
       sources += [
         "activity_impl_posix_unittest.cc",
+        "ipc/ipc_security_posix_unittest.cc",
         "util/posix_util_unittest.cc",
       ]
 
-      deps += [ "//chrome/updater/mojom" ]
+      deps += [
+        "//chrome/updater/mojom",
+        "//components/named_mojo_ipc_server",
+        "//mojo/public/c/system",
+      ]
     }
   }
 

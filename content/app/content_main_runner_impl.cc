@@ -123,7 +123,6 @@
 #include "services/tracing/public/cpp/perfetto/perfetto_traced_process.h"
 #include "services/tracing/public/cpp/trace_startup.h"
 #include "services/tracing/public/cpp/tracing_features.h"
-#include "services/webnn/public/cpp/webnn_sandbox_init.h"
 #include "third_party/abseil-cpp/absl/cleanup/cleanup.h"
 #include "third_party/blink/public/common/origin_trials/trial_token_validator.h"
 #include "third_party/perfetto/include/perfetto/tracing/track.h"
@@ -444,7 +443,6 @@ void PreSandboxInit() {
   PreloadLibraryCdms();
 #endif
   InitializeWebRtcModuleBeforeSandbox();
-  webnn::PreSandboxWebNNInitialization(/*is_gpu_process=*/false);
 
 #if BUILDFLAG(BUILD_TFLITE_WITH_XNNPACK)
   // cpuinfo needs to parse /proc/cpuinfo, or its equivalent.
@@ -976,7 +974,7 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
   if (basic_startup_exit_code.has_value())
     return basic_startup_exit_code.value();
 
-  if (!delegate_->IsInitFeatureListEarly()) {
+  if (!delegate_->DidPerformEarlyInitialization()) {
     base::allocator::PartitionAllocSupport::Get()->ReconfigureEarlyish(
         process_type);
   }
@@ -1062,9 +1060,14 @@ int ContentMainRunnerImpl::Initialize(ContentMainParams params) {
   // happen before crash reporting is initialized (which for chrome happens in
   // the call to PreSandboxStartup() on the delegate below), because otherwise
   // this would interfere with signal handlers used by crash reporting.
-  if (should_enable_stack_dump &&
-      !command_line.HasSwitch(switches::kDisableInProcessStackTraces)) {
-    base::debug::EnableInProcessStackDumping();
+  if (should_enable_stack_dump) {
+    if (!command_line.HasSwitch(switches::kDisableInProcessStackTraces)) {
+      base::debug::EnableInProcessStackDumping();
+    } else {
+#if BUILDFLAG(IS_WIN)
+      base::debug::DisableInProcessStackDumpingForTesting();  // IN-TEST
+#endif
+    }
   }
 
   base::debug::VerifyDebugger();
@@ -1311,7 +1314,7 @@ int ContentMainRunnerImpl::RunBrowser(MainFunctionParams main_params,
 #endif
 
     // When this is enabled, these things will have already been initialized.
-    if (!delegate_->IsInitFeatureListEarly()) {
+    if (!delegate_->DidPerformEarlyInitialization()) {
       // Register the TaskExecutor for posting task to the BrowserThreads. It is
       // incorrect to post to a BrowserThread before this point. This
       // instantiates and binds the MessageLoopForUI on the main thread (but
@@ -1340,7 +1343,7 @@ int ContentMainRunnerImpl::RunBrowser(MainFunctionParams main_params,
       best_effort_fence_.emplace();
     }
 
-    if (!delegate_->IsInitFeatureListEarly()) {
+    if (!delegate_->DidPerformEarlyInitialization()) {
       // Re-evaluate feature state now that FeatureList has been initialized, as
       // the task executor was created before FeatureList and could not access
       // Finch configurations.
@@ -1388,7 +1391,7 @@ int ContentMainRunnerImpl::RunBrowser(MainFunctionParams main_params,
     background_tracing_manager_ =
         CreateBackgroundTracingManagerAndInitializeScenarios();
 
-    if (!delegate_->IsInitFeatureListEarly()) {
+    if (!delegate_->DidPerformEarlyInitialization()) {
       // The FeatureList needs to be created before starting the ThreadPool.
       StartBrowserThreadPool();
 
@@ -1436,7 +1439,7 @@ int ContentMainRunnerImpl::RunBrowser(MainFunctionParams main_params,
 #endif
   }
 
-  if (!delegate_->IsInitFeatureListEarly()) {
+  if (!delegate_->DidPerformEarlyInitialization()) {
     // No specified process type means this is the Browser process.
     base::allocator::PartitionAllocSupport::Get()
         ->ReconfigureAfterFeatureListInit("");

@@ -79,7 +79,6 @@
 #include "chrome/browser/page_info/page_info_features.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_initialize.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
-#include "chrome/browser/payments/web_payments_observer.h"
 #include "chrome/browser/permissions/one_time_permissions_tracker_helper.h"
 #include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
 #include "chrome/browser/predictors/loading_predictor_factory.h"
@@ -209,6 +208,7 @@
 #include "components/infobars/content/content_infobar_manager.h"
 #include "components/javascript_dialogs/tab_modal_dialog_manager.h"
 #include "components/multistep_filter/core/features.h"
+#include "components/payments/content/web_payments_observer.h"
 #include "components/payments/core/features.h"
 #include "components/search/search.h"
 #include "components/site_engagement/content/site_engagement_helper.h"
@@ -872,7 +872,7 @@ void TabFeatures::Init(TabInterface& tab, Profile* profile) {
   zero_suggest_prefetch_tab_helper_ =
       std::make_unique<ZeroSuggestPrefetchTabHelper>(tab.GetContents());
 
-  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(tab.GetContents());
+  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(tab, tab.GetContents());
 
   if (SearchEngineChoiceTabHelper::IsHelperNeeded()) {
     search_engine_choice_tab_helper_ =
@@ -1646,7 +1646,7 @@ void TabFeatures::WillDiscardContents(tabs::TabInterface* tab,
   zero_suggest_prefetch_tab_helper_ =
       std::make_unique<ZeroSuggestPrefetchTabHelper>(new_contents);
 
-  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(new_contents);
+  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(*tab, new_contents);
 
   security_state_event_observer_ =
       std::make_unique<SecurityStateEventObserver>(new_contents);

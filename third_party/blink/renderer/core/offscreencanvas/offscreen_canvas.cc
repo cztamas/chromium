@@ -344,10 +344,6 @@ void OffscreenCanvas::SetSize(gfx::Size size) {
   }
 }
 
-void OffscreenCanvas::RecordTransfer() {
-  UMA_HISTOGRAM_BOOLEAN("Blink.OffscreenCanvas.Transferred", true);
-}
-
 void OffscreenCanvas::SetNeutered() {
   DCHECK(!context_);
   is_neutered_ = true;
@@ -826,7 +822,7 @@ bool OffscreenCanvas::PushFrameIfNeeded() {
 }
 
 bool OffscreenCanvas::PushFrame(
-    scoped_refptr<ExportedCanvasResource>&& exported_resource) {
+    scoped_refptr<ExportedCanvasResource> exported_resource) {
   TRACE_EVENT0("blink", "OffscreenCanvas::PushFrame");
   DCHECK(needs_push_frame_);
   needs_push_frame_ = false;

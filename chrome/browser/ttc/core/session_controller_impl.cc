@@ -4,11 +4,14 @@
 
 #include "chrome/browser/ttc/core/session_controller_impl.h"
 
+#include <algorithm>
 #include <memory>
+#include <string_view>
 #include <utility>
 
 #include "base/check_deref.h"
 #include "base/dcheck_is_on.h"
+#include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "base/location.h"
 #include "base/no_destructor.h"
@@ -21,7 +24,9 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ttc/app/public/audio_controller.h"
 #include "chrome/browser/ttc/core/features.h"
-#include "chrome/browser/ttc/core/lock_or_suspend_detector.h"
+#include "chrome/browser/ttc/core/pointer_input_observer.h"
+#include "chrome/browser/ttc/core/pointer_tracker.h"
+#include "chrome/browser/ttc/core/session_end_condition_detector.h"
 #include "chrome/browser/ttc/core/session_inactivity_detector.h"
 #include "chrome/browser/ttc/core/session_journal_impl.h"
 #include "chrome/browser/ttc/core/session_view.h"
@@ -54,6 +59,32 @@ void DCheckSessionLifecycleTransition(SessionLifecycle from,
 #endif  // DCHECK_IS_ON()
 }
 
+PointerTracker::Config PointerTrackerConfigFromFeatureParams() {
+  PointerTracker::Config config;
+  config.dwell_radius_dip =
+      static_cast<float>(kTtcGetPointerDwellRadiusDip.Get());
+  config.min_dwell_duration = kTtcGetPointerMinDwellDuration.Get();
+  config.pre_turn_lookback = kTtcGetPointerPreTurnLookback.Get();
+  config.idle_limit = kTtcGetPointerIdleLimit.Get();
+  // Zero or fewer results would make the tool useless, or wrap on the cast.
+  config.max_results = std::max(1, kTtcGetPointerMaxResults.Get());
+  return config;
+}
+
+std::string_view SessionEndReasonToString(
+    SessionEndConditionDetector::Reason reason) {
+  switch (reason) {
+    case SessionEndConditionDetector::Reason::kSuspend:
+      return "suspend";
+    case SessionEndConditionDetector::Reason::kScreenLock:
+      return "screen_lock";
+#if BUILDFLAG(IS_CHROMEOS)
+    case SessionEndConditionDetector::Reason::kUserSwitch:
+      return "user_switch";
+#endif  // BUILDFLAG(IS_CHROMEOS)
+  }
+}
+
 }  // namespace
 
 SessionControllerImpl::SessionControllerImpl(
@@ -75,6 +106,10 @@ SessionControllerImpl::SessionControllerImpl(
   observers_.AddObserver(session_view_.get());
   GetJournal().Log("TtcSessionStart", {});
 
+  if (base::FeatureList::IsEnabled(kTtcGetPointer)) {
+    pointer_tracker_ = std::make_unique<PointerTracker>(
+        PointerTrackerConfigFromFeatureParams());
+  }
   voice_focused_contents_tracker_observation_.Observe(
       voice_focused_contents_tracker_.get());
 
@@ -88,9 +123,10 @@ SessionControllerImpl::SessionControllerImpl(
   inactivity_detector_ = std::make_unique<SessionInactivityDetector>(
       *this, base::BindRepeating(&SessionControllerImpl::OnInactivityTimeout,
                                  weak_ptr_factory_.GetWeakPtr()));
-  lock_or_suspend_detector_ = std::make_unique<LockOrSuspendDetector>(
-      base::BindRepeating(&SessionControllerImpl::OnLockedOrSuspended,
-                          weak_ptr_factory_.GetWeakPtr()));
+  session_end_condition_detector_ =
+      std::make_unique<SessionEndConditionDetector>(base::BindRepeating(
+          &SessionControllerImpl::OnSessionEndConditionDetected,
+          weak_ptr_factory_.GetWeakPtr()));
 }
 
 SessionControllerImpl::~SessionControllerImpl() {
@@ -164,23 +200,26 @@ Profile* SessionControllerImpl::GetProfile() {
 void SessionControllerImpl::ProcessToolCall(
     const ToolRequest& tool_request,
     ToolResponseCallback tool_response_callback) {
-  std::string tool_name = tool_request.name;
-  base::DictValue tool_arguments = tool_request.arguments.Clone();
   tool_controller_.ProcessToolCall(
       tool_request,
-      base::BindOnce(
-          [](base::WeakPtr<SessionControllerImpl> self, std::string name,
-             base::DictValue args, ToolResponseCallback cb,
-             ToolResponse response) {
-            if (self) {
-              for (SessionController::Observer& observer : self->observers_) {
-                observer.OnToolExecutionCompleted(name, args, response.Ok());
-              }
-            }
-            std::move(cb).Run(std::move(response));
-          },
-          weak_ptr_factory_.GetWeakPtr(), std::move(tool_name),
-          std::move(tool_arguments), std::move(tool_response_callback)));
+      // Unretained is safe: `tool_controller_` is owned by `this` and only runs
+      // the callback while it's alive.
+      base::BindOnce(&SessionControllerImpl::NotifyToolExecutionCompleted,
+                     base::Unretained(this), tool_request.Clone())
+          .Then(std::move(tool_response_callback)));
+}
+
+void SessionControllerImpl::ProcessToolCallBatch(
+    std::vector<PendingToolCall> tool_calls) {
+  for (PendingToolCall& tool_call : tool_calls) {
+    // Unretained is safe: `tool_controller_` is owned by `this` and only runs
+    // the callback while it's alive.
+    tool_call.callback =
+        base::BindOnce(&SessionControllerImpl::NotifyToolExecutionCompleted,
+                       base::Unretained(this), tool_call.request.Clone())
+            .Then(std::move(tool_call.callback));
+  }
+  tool_controller_.ProcessToolCallBatch(std::move(tool_calls));
 }
 
 std::vector<ToolDefinition> SessionControllerImpl::GetToolDefinitions() {
@@ -283,6 +322,16 @@ void SessionControllerImpl::OnModelAudioEnvelopeReady(
   }
 }
 
+ToolResponse SessionControllerImpl::NotifyToolExecutionCompleted(
+    const ToolRequest& tool_request,
+    ToolResponse response) {
+  for (SessionController::Observer& observer : observers_) {
+    observer.OnToolExecutionCompleted(tool_request.name, tool_request.arguments,
+                                      response.Ok());
+  }
+  return response;
+}
+
 void SessionControllerImpl::NotifyTranscriptsUpdated() {
   // A finished session no longer reports transcripts.
   if (session_lifecycle_ == SessionLifecycle::kFinished) {
@@ -301,6 +350,9 @@ void SessionControllerImpl::OnSpeakerChanged(Speaker speaker) {
     return;
   }
   speaker_ = speaker;
+  if (speaker_ == Speaker::kUser) {
+    user_turn_start_ = base::TimeTicks::Now();
+  }
   for (SessionController::Observer& observer : observers_) {
     observer.OnSpeakerChanged(speaker_);
   }
@@ -340,6 +392,7 @@ void SessionControllerImpl::EndSessionAsync() {
 }
 
 void SessionControllerImpl::SendTextInput(const std::string& text) {
+  user_turn_start_ = base::TimeTicks::Now();
   conversation_->SendTextInput(text);
 }
 
@@ -351,11 +404,19 @@ void SessionControllerImpl::OnVoiceFocusedContentsChanged(
   page_context_monitor_.reset();
   if (web_contents) {
     page_context_monitor_ = std::make_unique<TtcPageContextMonitor>(
-        *web_contents, GetJournal(), service_->enterprise_policy_checker(),
+        *web_contents, *this, service_->enterprise_policy_checker(),
         base::BindRepeating(&Conversation::OnPageContextInvalidated,
                             base::Unretained(conversation_.get())),
         base::BindRepeating(&SessionControllerImpl::OnPageContextFetched,
                             base::Unretained(this)));
+  }
+  if (pointer_tracker_) {
+    // Positions were relative to the old contents.
+    pointer_tracker_->Clear();
+    pointer_input_observer_ = web_contents
+                                  ? std::make_unique<PointerInputObserver>(
+                                        pointer_tracker_.get(), web_contents)
+                                  : nullptr;
   }
   conversation_->OnPageContextInvalidated();
 }
@@ -419,20 +480,17 @@ void SessionControllerImpl::OnInactivityTimeout() {
   OnError(ErrorCode::kInactivityTimeout);
 }
 
-void SessionControllerImpl::OnLockedOrSuspended(
-    LockOrSuspendDetector::Reason reason) {
+void SessionControllerImpl::OnSessionEndConditionDetected(
+    SessionEndConditionDetector::Reason reason) {
   if (session_lifecycle_ == SessionLifecycle::kFinished) {
     return;
   }
-  // The user locked the screen or suspended the device, so there is no error
-  // to report.
-  GetJournal().Log(
-      "TtcSessionLockedOrSuspended",
-      actor::JournalDetailsBuilder()
-          .Add("reason", reason == LockOrSuspendDetector::Reason::kSuspend
-                             ? "suspend"
-                             : "screen_lock")
-          .Build());
+  // The user locked the screen, suspended the device, or switched users, so
+  // there is no error to report.
+  GetJournal().Log("TtcSessionEndConditionDetected",
+                   actor::JournalDetailsBuilder()
+                       .Add("reason", SessionEndReasonToString(reason))
+                       .Build());
   EndSessionAsync();
 }
 

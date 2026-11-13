@@ -3949,7 +3949,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Media.DocumentPictureInPicture.RequestedInitialWidth"
-    units="px" expires_after="2026-02-01">
+    units="px" expires_after="2027-11-11">
   <owner>steimel@chromium.org</owner>
   <owner>liberato@chromium.org</owner>
   <owner>media-dev-uma@chromium.org</owner>
@@ -3960,17 +3960,23 @@ chromium-metrics-reviews@google.com.
     size larger than the area of the screen, it will be recorded as 100%. If a
     website does not request a size or requests a size of zero, it is recorded
     as 1%.
+
+    Warning: this histogram was expired from 2026-02-01 to 2026-11-11; data may
+    be missing.
   </summary>
 </histogram>
 
 <histogram name="Media.DocumentPictureInPicture.RequestedLargeInitialSize"
-    enum="BooleanOccurred" expires_after="2026-03-19">
+    enum="BooleanOccurred" expires_after="2027-11-11">
   <owner>steimel@chromium.org</owner>
   <owner>media-dev-uma@chromium.org</owner>
   <summary>
     Recorded when a website opens a document picture-in-picture window. Records
     `Occurred` if the website requested a window size larger than the maximum
     allowed window size, otherwise records `Did not occur`.
+
+    Warning: this histogram was expired from 2026-03-19 to 2026-11-11; data may
+    be missing.
   </summary>
 </histogram>
 
@@ -4445,7 +4451,7 @@ chromium-metrics-reviews@google.com.
 
 <histogram name="Media.EME.HardwareSecure.AllowedForSite" enum="BooleanEnabled"
     expires_after="2027-09-22">
-  <owner>frs@chromium.org</owner>
+  <owner>sangbaekpark@chromium.org</owner>
   <owner>media-dev-uma@chromium.org</owner>
   <summary>
     Whether Media Foundation based CDM is enabled or disabled based on previous
@@ -5229,26 +5235,6 @@ chromium-metrics-reviews@google.com.
   <owner>rtc-meet-in-chrome@google.com</owner>
   <summary>
     Records whether getDisplayMedia was called with the audioSelection
-    constraint.
-  </summary>
-</histogram>
-
-<histogram name="Media.GetDisplayMedia.Constraints.DisplaySurface"
-    enum="GetDisplayMediaConstraintsDisplaySurface" expires_after="2024-03-17">
-  <owner>eladalon@chromium.org</owner>
-  <owner>fbeaufort@chromium.org</owner>
-  <summary>
-    Records whether getDisplayMedia was called with the displaySurface
-    constraint.
-  </summary>
-</histogram>
-
-<histogram name="Media.GetDisplayMedia.Constraints.MonitorTypeSurfaces"
-    enum="GetDisplayMediaIncludeExcludeConstraint" expires_after="2024-09-01">
-  <owner>eladalon@chromium.org</owner>
-  <owner>fbeaufort@chromium.org</owner>
-  <summary>
-    Records whether getDisplayMedia was called with the monitorTypeSurfaces
     constraint.
   </summary>
 </histogram>
@@ -7010,7 +6996,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Media.PictureInPicture.Tucked"
-    enum="PictureInPictureTuckedType" expires_after="2026-04-22">
+    enum="PictureInPictureTuckedType" expires_after="2027-11-11">
   <owner>steimel@chromium.org</owner>
   <owner>liberato@chromium.org</owner>
   <summary>
@@ -7018,6 +7004,9 @@ chromium-metrics-reviews@google.com.
     ScopedTuckPictureInPicture object. Records whether the tucked
     picture-in-picture window was just opened or already existed when the
     ScopedTuckPictureInPicture was created.
+
+    Warning: this histogram was expired from 2026-04-22 to 2026-11-11; data may
+    be missing.
   </summary>
 </histogram>
 
@@ -7617,15 +7606,6 @@ chromium-metrics-reviews@google.com.
   </token>
 </histogram>
 
-<histogram name="Media.RTCVideoDecoderFirstFrameLatencyMs" units="ms"
-    expires_after="2022-06-05">
-  <owner>liberato@chromium.org</owner>
-  <owner>webrtc-video@google.com</owner>
-  <summary>
-    Time from decoder creation until the first frame is decoded.
-  </summary>
-</histogram>
-
 <histogram name="Media.RTCVideoDecoderInitDecodeSuccess" enum="BooleanSuccess"
     expires_after="never">
 <!-- expires-never: WebRTC health metric. -->
@@ -8072,16 +8052,6 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
-<histogram name="Media.Ui.GetDisplayMedia.DisplayCapturePolicyResult"
-    enum="DisplayCapturePolicyResult" expires_after="2024-03-17">
-  <owner>eladalon@chromium.org</owner>
-  <owner>guidou@chromium.org</owner>
-  <summary>
-    Records whether the display-capture permission policy allows/disallows this
-    call to getDisplayMedia.
-  </summary>
-</histogram>
-
 <histogram name="Media.Ui.GetDisplayMedia.HasScreenRecordingPermission"
     enum="Boolean" expires_after="2027-09-25">
   <owner>tovep@chromium.org</owner>
@@ -8448,13 +8418,16 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Media.VideoCapture.DelayUntilFirstFrame" units="ms"
-    expires_after="2026-10-11">
-  <owner>armax@chromium.org</owner>
-  <owner>video-cmi-mpp@google.com</owner>
+    expires_after="2027-10-11">
+  <owner>handellm@google.com</owner>
+  <owner>rtc-meet-in-chrome@google.com</owner>
   <summary>
     Time it takes from the moment that a VideoCaptureController is requested to
     start to the moment the first video frame arrives at
     VideoCaptureController::OnFrameReadyInBuffer().
+
+    Warning: this histogram was expired from 2026-10-11 to M159; data may be
+    missing.
   </summary>
 </histogram>
 

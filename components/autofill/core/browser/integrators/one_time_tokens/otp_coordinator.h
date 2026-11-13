@@ -48,7 +48,8 @@ class FormData;
 // `OtpSuggestionDropdownDispatcher`.
 //
 // While active in a tab, `OtpCoordinator`'s `OtpSecurityGateway` must be the
-// sole caller of the single-flight `AutofillClient::GetOtpPhishGuardDelegate()`.
+// sole caller of the single-flight
+// `AutofillClient::GetOtpPhishGuardDelegate()`.
 class OtpCoordinator : public OtpSource::Observer {
  public:
   class Observer : public base::CheckedObserver {
@@ -57,6 +58,14 @@ class OtpCoordinator : public OtpSource::Observer {
     virtual void OnOtpAvailable(const OtpSuggestionData& data) = 0;
     virtual void TriggerSuggestions(FieldGlobalId field_id) = 0;
   };
+
+  // Maximum delay between dispatching a proactive trigger to the renderer and
+  // the resulting OTP popup being shown for the popup to be attributed to the
+  // trigger. This is a heuristic: attributing via the suggestion trigger source
+  // would be precise, but requires plumbing it through
+  // `AutofillManager::Observer::OnSuggestionsShown()`.
+  static constexpr base::TimeDelta kProactiveTriggerAttributionWindow =
+      base::Seconds(5);
 
   // `client` must be non-null and outlive this coordinator.
   explicit OtpCoordinator(AutofillClient* client);
@@ -75,9 +84,10 @@ class OtpCoordinator : public OtpSource::Observer {
   void StopListeningForForm(FormGlobalId form_id,
                             const base::flat_set<FieldGlobalId>& except = {});
 
-  // Returns verified, unused OTPs available for `target`.
-  std::vector<one_time_tokens::OneTimeToken> GetAvailableTokens(
-      const OtpTarget& target) const;
+  // Returns verified, unused OTPs available for `target`, and renews OTP
+  // source subscriptions if `target` has an active delivery.
+  std::vector<one_time_tokens::OneTimeToken>
+  RenewSubscriptionsAndRetrieveAvailableTokens(const OtpTarget& target);
 
   // `observer` must be non-null and is retained until `UnregisterObserver()` is
   // called or `this` is destroyed.
@@ -115,7 +125,11 @@ class OtpCoordinator : public OtpSource::Observer {
   void OnOtpFilled(const OtpTarget& target, const std::string& filled_value);
 
   // Consumes any non-empty OTP field value on `form` across sources and
-  // deliveries for the field's origin, and drops the form's deliveries.
+  // deliveries for the field's origin. Keeps listening for `form`'s OTP fields
+  // because a submission does not imply that the OTP flow ended (e.g. a
+  // single-page app may reject the code and keep the form for a resent OTP);
+  // their deliveries are dropped once the form is removed, re-classified, or
+  // its frame becomes inactive.
   void OnOtpFormSubmitted(const FormData& form);
 
   // OtpSource::Observer:
@@ -134,6 +148,11 @@ class OtpCoordinator : public OtpSource::Observer {
     base::TimeTicks recorded_at;
   };
 
+  struct DispatchedProactiveTrigger {
+    OtpTokenIdentity identity;
+    base::TimeTicks dispatched_at;
+  };
+
   static SiteFrame GetSiteFrame(const OtpTarget& target);
   static bool IsUsedTokenExpired(const UsedToken& used, base::TimeTicks now);
 
@@ -143,6 +162,18 @@ class OtpCoordinator : public OtpSource::Observer {
                            OtpDeliveryPolicy::Decision decision);
   void TryProactiveTrigger(const OtpTarget& target,
                            const OtpCandidate& candidate);
+  // Records the proactive trigger outcome for `identity` on `field`: shown if
+  // `suppression_reason` is `std::nullopt`, suppressed otherwise. Records
+  // nothing if an outcome was already recorded for `identity` on `field`.
+  void MaybeLogProactiveTriggerOutcome(
+      FieldGlobalId field,
+      const OtpTokenIdentity& identity,
+      std::optional<OtpProactiveTriggerSuppressionReason> suppression_reason);
+  // Returns the identity proactively triggered on `field` if the trigger was
+  // dispatched recently enough for an OTP popup on `field` to be attributed to
+  // it, or nullptr otherwise.
+  const OtpTokenIdentity* FindAttributableProactiveTrigger(
+      FieldGlobalId field) const;
   void RetryDeferredProactiveTriggers();
   void RecordFormSuggestionsShown(FormGlobalId form_id,
                                   const OtpTokenIdentity& identity);
@@ -166,6 +197,18 @@ class OtpCoordinator : public OtpSource::Observer {
   std::vector<std::unique_ptr<OtpSource>> sources_;
   OtpSecurityGateway security_gateway_;
   OtpSuggestionDropdownDispatcher suggestion_dropdown_dispatcher_;
+  // Proactive triggers dispatched to the renderer per field, until an OTP popup
+  // is shown on the field or the field's delivery is dropped.
+  base::flat_map<FieldGlobalId, DispatchedProactiveTrigger>
+      proactively_triggered_by_field_;
+  // Candidate identities for which a proactive trigger outcome (either shown or
+  // suppressed) was logged to UMA, per field. Several identities per field are
+  // needed because candidates are not always logged in arrival order, e.g. for
+  // the SMS and Gmail copies of one code. Entries survive `DropDeliveries()`
+  // (e.g. form re-parses) so an outcome is not logged twice, and are erased
+  // when the frame hosting the field becomes inactive.
+  base::flat_map<FieldGlobalId, std::vector<OtpTokenIdentity>>
+      logged_proactive_outcomes_by_field_;
   base::ObserverList<Observer> observers_;
 
   bool is_tab_visible_ = true;

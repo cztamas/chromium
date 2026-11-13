@@ -60,6 +60,7 @@
 #include "services/network/public/mojom/service_worker_router_info.mojom.h"
 #include "third_party/blink/public/common/features.h"
 #include "third_party/blink/public/common/service_worker/service_worker_loader_helpers.h"
+#include "third_party/blink/public/mojom/service_worker/service_worker_database.mojom-forward.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_fetch_handler_bypass_option.mojom-shared.h"
 #include "third_party/blink/public/mojom/service_worker/service_worker_fetch_response_callback.mojom.h"
 #include "third_party/blink/public/mojom/use_counter/metrics/web_feature.mojom-shared.h"
@@ -1143,7 +1144,16 @@ void ServiceWorkerMainResourceLoader::Fallback(
 bool ServiceWorkerMainResourceLoader::MaybeStartSyntheticNetworkRequest(
     scoped_refptr<ServiceWorkerContextWrapper> context_wrapper,
     scoped_refptr<ServiceWorkerVersion> version) {
+  // Synthetic responses apply only to synthetic registrations (`id <=
+  // kSyntheticResponseServiceWorkerRegistrationId`); real registrations use
+  // non-negative IDs. Bail out before embedder preload interception or
+  // eligibility histograms so real service workers never have prefetches
+  // hijacked, fetch handlers bypassed, or controlled responses marked with
+  // `from_synthetic_response` (crbug.com/582423396).
   if (!service_worker_client_ || !resource_request_.is_outermost_main_frame ||
+      !version ||
+      version->registration_id() >
+          blink::mojom::kSyntheticResponseServiceWorkerRegistrationId ||
       !service_worker_loader_helpers::IsEligibleForSyntheticResponse(
           context_wrapper->browser_context(),
           context_wrapper->storage_partition(), resource_request_.url)) {
@@ -1191,9 +1201,20 @@ bool ServiceWorkerMainResourceLoader::MaybeStartSyntheticNetworkRequest(
         service_worker_client_.get(),
         blink::mojom::ServiceWorkerFetchHandlerBypassOption::
             kSyntheticResponse);
+    mojo::PendingRemote<network::mojom::URLLoaderClient> client_to_pass =
+        url_loader_client_.Unbind();
+    if (blink::features::
+            kServiceWorkerSyntheticResponseCaptureInterceptedHeaders.Get() &&
+        !service_worker_loader_helpers::
+            IsSyntheticResponseDryRunModeEnabled()) {
+      // Observe `OnReceiveResponse` on the client pipe only; `receiver_` stays
+      // bound to the preload loader so the body is never buffered here.
+      client_to_pass = ServiceWorkerSyntheticResponseManager::
+          MaybeWrapClientToStoreResponseHeaders(version,
+                                                std::move(client_to_pass));
+    }
     std::move(handler.value())
-        .Run(resource_request_, receiver_.Unbind(),
-             url_loader_client_.Unbind());
+        .Run(resource_request_, receiver_.Unbind(), std::move(client_to_pass));
     return true;
   }
 

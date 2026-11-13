@@ -1014,6 +1014,7 @@ if (is_android) {
     if (is_desktop_android) {
       deps += [
         "//chrome/browser/ui/android:browser_tests",
+        "//chrome/browser/ui/bookmarks/controllers/android:browser_tests",
         "//chrome/browser/ui/browser_window:browser_tests",
         "//chrome/browser/ui/browser_window/internal:android_browsertests",
         "//chrome/browser/ui/browser_window/test:android_browser_test_support",
@@ -1177,6 +1178,7 @@ if (is_android) {
       "//chrome/browser/android/customtabs:java",
       "//chrome/browser/android/metrics:base_java",
       "//chrome/browser/tabmodel:java",
+      "//components/background_task_scheduler:background_task_scheduler_java",
       "//components/crash/android:java",
       "//components/module_installer/android:module_installer_java",
       "//content/public/android:content_java",
@@ -2599,6 +2601,7 @@ test("unit_tests") {
     "//chrome/browser/profiles:unit_tests",
     "//chrome/browser/push_messaging:unit_tests",
     "//chrome/browser/pwc:unit_tests",
+    "//chrome/browser/readaloud:unit_tests",
     "//chrome/browser/regional_capabilities:unit_tests",
     "//chrome/browser/safe_browsing:unit_tests",
     "//chrome/browser/search:unit_tests",
@@ -2893,7 +2896,6 @@ test("unit_tests") {
       "//chrome/browser/partnerbookmarks:unit_tests",
       "//chrome/browser/password_manager/android:unit_tests",
       "//chrome/browser/password_manager/android/grouped_affiliations:unit_tests",
-      "//chrome/browser/readaloud:unit_tests",
       "//chrome/browser/reading_list/android:unit_tests",
       "//chrome/browser/regional_capabilities/android:test_utils_java",
       "//chrome/browser/safe_browsing/android:test_support_java",
@@ -3635,6 +3637,8 @@ if (is_chromeos) {
       "//crypto:test_support",
       "//extensions/buildflags",
       "//google_apis:test_support",
+      "//google_apis/common:test_support",
+      "//google_apis/drive",
       "//net",
       "//net:net_resources",
       "//net:test_support",
@@ -3651,17 +3655,6 @@ if (is_chromeos) {
       "//ui/resources:ui_test_pak",
       "//ui/web_dialogs:test_support",
     ]
-
-    if (is_linux) {
-      deps += [ "//ui/linux:display_server_utils" ]
-    }
-
-    if (enable_extensions) {
-      deps += [
-        "//google_apis/common:test_support",
-        "//google_apis/drive",
-      ]
-    }
   }
 }
 

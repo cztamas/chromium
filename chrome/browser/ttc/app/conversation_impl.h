@@ -15,7 +15,9 @@
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observation.h"
+#include "base/time/time.h"
 #include "chrome/browser/ttc/app/audio_logger.h"
+#include "chrome/browser/ttc/app/playback_status_reporter.h"
 #include "chrome/browser/ttc/app/public/audio_controller.h"
 #include "chrome/browser/ttc/app/speaker_tracker.h"
 #include "chrome/browser/ttc/core/states.h"
@@ -73,8 +75,10 @@ class ConversationImpl : public Conversation,
   void OnCaptureStopped() override;
   void OnCaptureMuted(bool muted, bool at_stream_start) override;
   void OnModelAudioEnvelopeReady(const AudioEnvelope& envelope) override;
-  void OnPlaybackCompleted(int64_t sequence_number) override;
+  void OnPlaybackProgress(base::TimeDelta played_duration,
+                          bool did_fully_drain_queue) override;
   void OnAudioError(ErrorCode error) override;
+  void OnPlaybackError() override;
 
   // TtcBackend::Observer implementation:
   void OnBackendInitialized() override;
@@ -92,6 +96,7 @@ class ConversationImpl : public Conversation,
   void OnUserTurnStateUpdate(UserTurnStateUpdate update) override;
   void OnToolCall(const ToolRequest& tool_request,
                   ToolResponseCallback response_callback) override;
+  void OnToolCallBatch(std::vector<PendingToolCall> tool_calls) override;
   void OnJournalEvent(const ServerJournalEvent& journal_event) override;
 
   AudioController* audio_controller() { return audio_controller_.get(); }
@@ -100,6 +105,9 @@ class ConversationImpl : public Conversation,
 
  private:
   void OnSpeakerChanged(Speaker old_speaker, Speaker new_speaker);
+  void SendPlaybackStatusReport(base::TimeDelta playback_progress,
+                                bool playback_complete,
+                                int64_t generation_id);
 
   std::unique_ptr<TtcBackend> backend_;
   std::unique_ptr<AudioController> audio_controller_;
@@ -112,6 +120,7 @@ class ConversationImpl : public Conversation,
   const raw_ref<SessionController> session_controller_;
 
   SpeakerTracker speaker_tracker_;
+  std::unique_ptr<PlaybackStatusReporter> playback_status_reporter_;
 
   base::ScopedObservation<AudioController, AudioController::Observer>
       audio_controller_observation_{this};

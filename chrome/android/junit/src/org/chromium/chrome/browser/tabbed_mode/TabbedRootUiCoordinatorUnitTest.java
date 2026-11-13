@@ -39,6 +39,7 @@ import org.robolectric.Robolectric;
 import org.robolectric.android.controller.ActivityController;
 
 import org.chromium.base.CallbackUtils;
+import org.chromium.base.DeviceInfo;
 import org.chromium.base.UnownedUserDataHost;
 import org.chromium.base.UserDataHost;
 import org.chromium.base.supplier.ObservableSuppliers;
@@ -59,6 +60,7 @@ import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.fullscreen.BrowserControlsManager;
 import org.chromium.chrome.browser.fullscreen.FullscreenManager;
 import org.chromium.chrome.browser.gesturenav.BackActionDelegate.ActionType;
+import org.chromium.chrome.browser.history.IncognitoHistoryDisclaimerCoordinator;
 import org.chromium.chrome.browser.lifecycle.ActivityLifecycleDispatcher;
 import org.chromium.chrome.browser.lifecycle.ActivityResultWithNativeObserver;
 import org.chromium.chrome.browser.lifecycle.PauseResumeWithNativeObserver;
@@ -66,6 +68,7 @@ import org.chromium.chrome.browser.multiwindow.MultiWindowModeStateDispatcher;
 import org.chromium.chrome.browser.omaha.UpdateMenuItemHelper;
 import org.chromium.chrome.browser.omaha.inline.InAppUpdateController;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.chrome.browser.reader_mode.ReaderModeBottomSheetManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabAssociatedApp;
 import org.chromium.chrome.browser.tab.TabLaunchType;
@@ -156,6 +159,21 @@ public class TabbedRootUiCoordinatorUnitTest {
         mProfileSupplier.set(mCurrentProfile);
         mCoordinator = createCoordinator(/* bottomBarHostManager= */ null);
         mCoordinator.setScrimManagerForTesting(mScrimManager);
+    }
+
+    @Test
+    @EnableFeatures(ChromeFeatureList.ANDROID_DESKTOP_WEB_UI_HISTORY)
+    public void testIncognitoHistoryDisclaimerCoordinator_lifecycleAndDesktopGate() {
+        DeviceInfo.setIsDesktopForTesting(false);
+        mCoordinator.maybeInitIncognitoHistoryDisclaimerCoordinator();
+        assertNull(IncognitoHistoryDisclaimerCoordinator.getForWindowForTesting(mWindowAndroid));
+
+        DeviceInfo.setIsDesktopForTesting(true);
+        mCoordinator.maybeInitIncognitoHistoryDisclaimerCoordinator();
+        assertNotNull(IncognitoHistoryDisclaimerCoordinator.getForWindowForTesting(mWindowAndroid));
+
+        mCoordinator.onDestroy();
+        assertNull(IncognitoHistoryDisclaimerCoordinator.getForWindowForTesting(mWindowAndroid));
     }
 
     /**
@@ -482,6 +500,19 @@ public class TabbedRootUiCoordinatorUnitTest {
         mCoordinator = createCoordinator(/* bottomBarHostManager= */ null);
 
         assertNull(mCoordinator.getActionRegistryForTesting());
+    }
+
+    @Test
+    public void testInitReaderModeBottomSheetManager_usesTopUiThemeColorProvider() {
+        mCoordinator.onPreInflationStartup();
+
+        ReaderModeBottomSheetManager readerModeBottomSheetManager =
+                mCoordinator.initReaderModeBottomSheetManagerForTesting();
+
+        assertNotNull(readerModeBottomSheetManager);
+        assertSame(
+                mCoordinator.getTopUiThemeColorProvider(),
+                readerModeBottomSheetManager.getThemeColorProviderForTesting());
     }
 
     private AtomicInteger attachLoadingStub() {

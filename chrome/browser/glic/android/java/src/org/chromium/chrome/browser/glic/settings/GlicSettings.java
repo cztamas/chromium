@@ -56,11 +56,11 @@ import org.chromium.chrome.browser.ui.bottombar.BottomBarActionEligibility;
 import org.chromium.chrome.browser.ui.bottombar.BottomBarConfigUtils;
 import org.chromium.components.browser_ui.settings.ChromeExpandableSwitchPreference;
 import org.chromium.components.browser_ui.settings.ChromeSwitchPreference;
-import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
 import org.chromium.components.browser_ui.settings.SettingsFragment;
 import org.chromium.components.browser_ui.settings.SettingsNavigation;
 import org.chromium.components.browser_ui.settings.SettingsUtils;
 import org.chromium.components.browser_ui.settings.search.SettingsIndexData;
+import org.chromium.components.browser_ui.util.CustomTabLauncher;
 import org.chromium.components.browser_ui.widget.containment.ContainerStyle;
 import org.chromium.components.browser_ui.widget.containment.ContainmentItemDecoration;
 import org.chromium.components.browser_ui.widget.highlight.ViewHighlighter;
@@ -128,7 +128,6 @@ public class GlicSettings extends ChromeBaseSettingsFragment {
     private @Nullable ChromeSwitchPreference mLauncherEnabledPref;
     private @Nullable Preference mLauncherHotkeyPref;
     private @Nullable Preference mNavigationShortcutPref;
-    private @Nullable PrefService mLocalPrefs;
     private GlicKeyedService.@Nullable UserEnabledActuationOnWebObserver
             mUserEnabledActuationOnWebObserver;
     private GlicKeyedService.@Nullable ExperimentalTriggeringObserver
@@ -197,7 +196,7 @@ public class GlicSettings extends ChromeBaseSettingsFragment {
         SettingsUtils.addPreferencesFromResource(this, R.xml.glic_settings);
         mPageTitle.set(getString(R.string.glic_setting_label));
 
-        SettingsCustomTabLauncher customTabLauncher = getCustomTabLauncher();
+        CustomTabLauncher customTabLauncher = getCustomTabLauncher();
 
         PrefService prefService = UserPrefs.get(getProfile());
         mPrefChangeRegistrar = new PrefChangeRegistrar(prefService);
@@ -270,10 +269,9 @@ public class GlicSettings extends ChromeBaseSettingsFragment {
         mLauncherEnabledPref = findPreference(PREF_LAUNCHER_ENABLED);
         mLauncherHotkeyPref = findPreference(PREF_LAUNCHER_HOTKEY);
         mNavigationShortcutPref = findPreference(PREF_NAVIGATION_SHORTCUT);
-        mLocalPrefs = LocalStatePrefs.get();
 
-        if (mLocalPrefs != null && KeyboardUtils.isHardKeyboardConnected(context)) {
-            final PrefService localPrefs = mLocalPrefs;
+        if (KeyboardUtils.isHardKeyboardConnected(context)) {
+            PrefService localPrefs = LocalStatePrefs.get();
             boolean enabled = localPrefs.getBoolean(GlicPrefNames.GLIC_LAUNCHER_ENABLED);
             if (mLauncherEnabledPref != null) {
                 mLauncherEnabledPref.setChecked(enabled);
@@ -897,7 +895,7 @@ public class GlicSettings extends ChromeBaseSettingsFragment {
 
     private SpanApplier.SpanInfo createSpanInfo(
             String openTag, String url, ChromeExpandableSwitchPreference pref) {
-        SettingsCustomTabLauncher customTabLauncher = getCustomTabLauncher();
+        CustomTabLauncher customTabLauncher = getCustomTabLauncher();
         int color;
         if (GlicEnabling.isDisabledByPolicy(getProfile())) {
             color = pref.getDisabledColor();

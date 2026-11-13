@@ -196,18 +196,6 @@ chromium-metrics-reviews@google.com.
   </token>
 </histogram>
 
-<histogram name="Notifications.Android.IntentStartToNativeInitializedDuration"
-    units="ms" expires_after="2025-04-13">
-  <owner>peter@chromium.org</owner>
-  <owner>qinmin@chromium.org</owner>
-  <summary>
-    Records how long it takes from receiving a notification in the
-    TrampolineActivity to finish initializing the native library. A sample is
-    recorded the first time native library is initialized upon receiving a
-    notification intent. Measured on Android.
-  </summary>
-</histogram>
-
 <histogram name="Notifications.Android.JobIsAlreadyPending{IntentAction}"
     enum="Boolean" expires_after="2027-02-13">
   <owner>peter@chromium.org</owner>
@@ -315,17 +303,6 @@ chromium-metrics-reviews@google.com.
     <variant name=".PreUnsubscribe"
         summary="Counts only intents with action PRE_UNSUBSCRIBE."/>
   </token>
-</histogram>
-
-<histogram name="Notifications.Android.NotificationEvent"
-    enum="NotificationEvent" expires_after="2025-10-31">
-  <owner>qinmin@chromium.org</owner>
-  <summary>
-    Records various events on calling Android NotificationManager. One record is
-    emitted both before and after the call. This metric captures whether a call
-    is made, and whether it successfully returns the desired result. Only
-    measured on Android.
-  </summary>
 </histogram>
 
 <histogram name="Notifications.Android.SitesChannel" enum="BooleanUsage"
@@ -598,16 +575,6 @@ chromium-metrics-reviews@google.com.
     expired from March 10 to mid-July 2025.
   </summary>
   <token key="NotificationAction" variants="NotificationAction"/>
-</histogram>
-
-<histogram name="Notifications.Database.DeleteAllForOriginsResult"
-    enum="NotificationDatabaseStatus" expires_after="M98">
-  <owner>knollr@chromium.org</owner>
-  <owner>peter@chromium.org</owner>
-  <summary>
-    Records the result status codes of deleting all notification data for given
-    origins. This happens when notification permissions are revoked for a site.
-  </summary>
 </histogram>
 
 <histogram name="Notifications.Database.DeleteBeforeWriteResult"

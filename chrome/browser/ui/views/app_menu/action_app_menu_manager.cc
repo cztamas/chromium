@@ -66,6 +66,7 @@
 #include "chrome/browser/ui/lens/lens_overlay_entry_point_controller.h"
 #include "chrome/browser/ui/profiles/profile_view_utils.h"
 #include "chrome/browser/ui/tabs/features.h"
+#include "chrome/browser/ui/tabs/remote_tabs_menu_util.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
 #include "chrome/browser/ui/toolbar/app_menu_icon_controller.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
@@ -784,14 +785,19 @@ void ActionAppMenuManager::AddYourChromeActions(actions::ActionItem* root) {
               /*build_submenu=*/std::nullopt,
               {.element_id = AppMenuModel::kHistoryMenuItem});
 
-          section.AddDynamicSubmenu(
-              kActionOtherDeviceTabsSubmenu,
-              base::BindRepeating(
-                  &RecentTabsDynamicMenu::BuildOtherDeviceTabsActions,
-                  recent_tabs_menu_->GetWeakPtr()),
-              /*build_submenu=*/std::nullopt,
-              {.element_id = AppMenuModel::kOtherDeviceTabsMenuItem,
-               .is_submenu = true});
+          // Omit the entry when ineligible so it is hidden rather than shown
+          // empty/disabled.
+          if (remote_tabs_menu_util::ShouldShowOtherDeviceTabsMenuItem(
+                  profile)) {
+            section.AddDynamicSubmenu(
+                kActionOtherDeviceTabsSubmenu,
+                base::BindRepeating(
+                    &RecentTabsDynamicMenu::BuildOtherDeviceTabsActions,
+                    recent_tabs_menu_->GetWeakPtr()),
+                /*build_submenu=*/std::nullopt,
+                {.element_id = AppMenuModel::kOtherDeviceTabsMenuItem,
+                 .is_submenu = true});
+          }
         }
 
         section.AddAction(kActionShowDownloadsPage,
@@ -1335,16 +1341,11 @@ void ActionAppMenuManager::AddWebAppActions(actions::ActionItem* root) {
       .AddSection(DisplayType::kSection, [this, app_browser_controller,
                                           is_isolated_web_app](
                                              AppMenuBuilder& section) {
-#if BUILDFLAG(ENABLE_EXTENSIONS)
-        ExtensionsContainer* extensions_container =
-            ExtensionsContainer::From(*browser_window_interface_);
-        if (base::FeatureList::IsEnabled(
-                features::kDesktopPWAsElidedExtensionsMenu) &&
-            extensions_container && extensions_container->HasAnyExtensions() &&
-            !is_isolated_web_app) {
-          section.AddAction(kActionWebAppShowExtensions);
+        section.AddAction(kActionCopyUrl);
+
+        if (ShouldAllowOpenInChrome(browser_window_interface_)) {
+          section.AddAction(kActionOpenInChrome);
         }
-#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
         if (app_browser_controller->has_tab_strip() &&
             !app_browser_controller->ShouldHideNewTabButton()) {
@@ -1353,12 +1354,6 @@ void ActionAppMenuManager::AddWebAppActions(actions::ActionItem* root) {
               {.icon_override = ui::ImageModel::FromVectorIcon(
                    features::IsRoundedIconsEnabled() ? kTabIcon
                                                      : kNewTabRefreshOldIcon)});
-        }
-
-        section.AddAction(kActionCopyUrl);
-
-        if (ShouldAllowOpenInChrome(browser_window_interface_)) {
-          section.AddAction(kActionOpenInChrome);
         }
 
 #if BUILDFLAG(IS_CHROMEOS)
@@ -1425,6 +1420,17 @@ void ActionAppMenuManager::AddWebAppActions(actions::ActionItem* root) {
           });
         }
 #endif  // BUILDFLAG(IS_CHROMEOS)
+
+#if BUILDFLAG(ENABLE_EXTENSIONS)
+        ExtensionsContainer* extensions_container =
+            ExtensionsContainer::From(*browser_window_interface_);
+        if (base::FeatureList::IsEnabled(
+                features::kDesktopPWAsElidedExtensionsMenu) &&
+            extensions_container && extensions_container->HasAnyExtensions() &&
+            !is_isolated_web_app) {
+          section.AddAction(kActionWebAppShowExtensions);
+        }
+#endif  // BUILDFLAG(ENABLE_EXTENSIONS)
 
         section.AddDivider(ui::MenuSeparatorType::SPACING_SEPARATOR)
             .AddSubmenu(

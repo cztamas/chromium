@@ -678,6 +678,7 @@ public class ImeTest {
     @Test
     @SmallTest
     @Feature({"TextInput"})
+    @DisabledTest(message = "https://crbug.com/576781074")
     public void testLongPressInputWhileComposingText() throws Exception {
         mRule.assertWaitForSelectActionBarStatus(false);
         mRule.setComposingText("SampleTextThatIsVeryLong Test", 1);
@@ -1813,6 +1814,7 @@ public class ImeTest {
     @Test
     @MediumTest
     @Feature({"TextInput"})
+    @DisableIf.Build(supported_abis_includes = "x86_64", message = "https://crbug.com/585134688")
     public void testUiThreadAccess() throws Exception {
         final ChromiumBaseInputConnection connection = mRule.getConnection();
         ThreadUtils.runOnUiThreadBlocking(

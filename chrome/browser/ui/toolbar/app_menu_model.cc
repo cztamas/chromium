@@ -85,6 +85,7 @@
 #include "chrome/browser/ui/tabs/features.h"
 #include "chrome/browser/ui/tabs/other_device_tabs_sub_menu_model.h"
 #include "chrome/browser/ui/tabs/recent_tabs_sub_menu_model.h"
+#include "chrome/browser/ui/tabs/remote_tabs_menu_util.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_metrics.h"
 #include "chrome/browser/ui/tabs/vertical_tab_strip_state_controller.h"
@@ -140,7 +141,6 @@
 #include "components/skills/features.h"
 #include "components/strings/grit/components_strings.h"
 #include "components/subscription_eligibility/ai_subscription_tier_names.h"
-#include "components/sync/base/features.h"
 #include "components/sync/service/sync_service.h"
 #include "components/user_education/common/feature_promo/feature_promo_controller.h"
 #include "components/vector_icons/vector_icons.h"
@@ -1486,13 +1486,6 @@ void AppMenuModel::LogMenuMetrics(int command_id) {
       }
       LogMenuAction(MENU_ACTION_RECENT_TAB);
       break;
-    case IDC_RECENT_TABS_LOGIN_FOR_DEVICE_TABS:
-      if (!uma_action_recorded_) {
-        base::UmaHistogramMediumTimes(
-            "WrenchMenu.TimeToAction.LoginForDeviceTabs", delta);
-      }
-      LogMenuAction(MENU_ACTION_RECENT_TABS_LOGIN_FOR_DEVICE_TABS);
-      break;
     case IDC_RECENT_TABS_SEE_DEVICE_TABS:
       if (!uma_action_recorded_) {
         base::UmaHistogramMediumTimes("WrenchMenu.TimeToAction.SeeDeviceTabs",
@@ -2076,7 +2069,10 @@ bool AppMenuModel::IsCommandIdEnabled(int command_id) const {
           browser_->GetProfile(),
           IncognitoModePrefs::IncognitoModeType::kStandard);
     case kOtherDeviceTabsMenuPlaceholder:
-      return base::FeatureList::IsEnabled(syncer::kCrossDeviceTabsInAppMenu);
+      // Gate dynamically as well since profile/sync state may change while
+      // the menu model is cached.
+      return remote_tabs_menu_util::ShouldShowOtherDeviceTabsMenuItem(
+          browser_->GetProfile());
     default:
       return chrome::IsCommandEnabled(browser_, command_id);
   }
@@ -2246,7 +2242,10 @@ void AppMenuModel::Build() {
         GetIndexOfCommandId(kRecentTabsMenuPlaceholder).value(),
         kHistoryMenuItem);
 
-    if (base::FeatureList::IsEnabled(syncer::kCrossDeviceTabsInAppMenu)) {
+    // Omit the entry at build time when ineligible so it is hidden rather than
+    // shown disabled.
+    if (remote_tabs_menu_util::ShouldShowOtherDeviceTabsMenuItem(
+            browser_->GetProfile())) {
       sub_menus_.push_back(std::make_unique<OtherDeviceTabsSubMenuModel>(
           browser_, base::BindRepeating(&AppMenuModel::LogMenuMetrics,
                                         base::Unretained(this))));

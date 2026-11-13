@@ -1569,6 +1569,19 @@ public final class ProductionSupportedFlagList {
                 "Allows configuring initial preconnect priority for Profile#preconnect and"
                         + " promotes active QUIC job priority when a higher-priority request"
                         + " attaches."),
+        Flag.baseFeature(
+                NetFeatures.CLEAR_BROKEN_ALTERNATIVE_SERVICES_ON_DEFAULT_NETWORK_CHANGE,
+                "When enabled, clears all broken and recently-broken alternative services when"
+                        + " the default network changes."),
+        Flag.baseFeature(
+                BlinkFeatures.PROCESS_HTML_DATA_IMMEDIATELY,
+                "Parses HTML data as soon as it arrives instead of posting a task. Has no"
+                        + " effect unless the feature params are set."),
+        Flag.baseFeature(
+                NetFeatures.RUST_BROTLI_IN_NET,
+                "Decodes brotli with the Rust brotli-decompressor crate instead of the C brotli"
+                        + " library. This covers the br content encoding (also with a shared"
+                        + " dictionary) and TLS certificate compression."),
         // Add new commandline switches and features above. The final entry should have a
         // trailing comma for cleaner diffs.
     };

@@ -25,6 +25,7 @@
 #include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/test/test_context_provider.h"
 #include "components/viz/test/test_raster_interface.h"
+#include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/client_shared_image.h"
 #include "gpu/command_buffer/common/shared_image_capabilities.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
@@ -135,7 +136,7 @@ class TestRenderingContext2D final
     return GetPaintCanvas();
   }
   using BaseRenderingContext2D::ConfigureRecorder;
-  using BaseRenderingContext2D::CreateSharedImageProvider;
+  using BaseRenderingContext2D::CreateSharedImagePool;
   using BaseRenderingContext2D::CreateSoftwareSurface;
   using BaseRenderingContext2D::FlushIfRecordingLimitExceeded;
   using BaseRenderingContext2D::Snapshot;
@@ -430,17 +431,19 @@ class BaseRenderingContext2DSharedImageTest : public testing::Test {
           gpu::SHARED_IMAGE_USAGE_SCANOUT) {
     auto* context = MakeGarbageCollected<TestRenderingContext2D>(
         scope, CanvasContextCreationAttributesCore(), kSize);
-    context->CreateSharedImageProvider(raster_mode, shared_image_usage_flags);
+    context->CreateSharedImagePool(raster_mode, shared_image_usage_flags);
     return context;
+  }
+
+  TestRenderingContext2D* CreateSingleBufferedContext(V8TestingScope& scope) {
+    return CreateBackedContext(
+        scope, RasterMode::kGPU,
+        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ | gpu::SHARED_IMAGE_USAGE_SCANOUT |
+            gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE);
   }
 
   gpu::SyncToken GetSyncToken(const ExportedCanvasResource* resource) {
     return resource->GetSyncTokenForTesting();
-  }
-
-  void EnsureResourceRecycled(
-      scoped_refptr<ExportedCanvasResource>&& resource) {
-    resource.reset();
   }
 
   test::TaskEnvironment task_environment_{
@@ -685,7 +688,8 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest,
   }
   auto old_shared_image = resource->GetSharedImageForTesting();
 
-  EnsureResourceRecycled(std::move(resource));
+  // Trigger resource recycling.
+  resource.reset();
 
   context->fillRect(0, 0, 1, 1);
   auto resource_again = context->PaintRenderingResultsToResource(
@@ -720,7 +724,10 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest, UnusedResources) {
   }
 
   EXPECT_FALSE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
-  EnsureResourceRecycled(std::move(resource));
+
+  // Trigger resource recycling.
+  resource.reset();
+
   // The reclaim task has been posted.
   EXPECT_TRUE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
 
@@ -753,7 +760,8 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest,
     ASSERT_NE(GetSyncToken(resource.get()), GetSyncToken(new_resource.get()));
   }
   EXPECT_FALSE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
-  EnsureResourceRecycled(std::move(resource));
+  // Trigger resource recycling.
+  resource.reset();
   // There is a ready-to-reuse resource.
   EXPECT_TRUE(context->HasUnusedResourcesForTesting());
   // No task posted.
@@ -780,7 +788,8 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest,
     ASSERT_NE(GetSyncToken(resource.get()), GetSyncToken(new_resource.get()));
   }
   EXPECT_FALSE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
-  EnsureResourceRecycled(std::move(resource));
+  // Trigger resource recycling.
+  resource.reset();
   EXPECT_TRUE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
 
   // There is a ready-to-reuse resource.
@@ -806,7 +815,8 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest,
     ASSERT_NE(GetSyncToken(resource.get()), GetSyncToken(new_resource.get()));
   }
 
-  EnsureResourceRecycled(std::move(resource));
+  // Trigger resource recycling.
+  resource.reset();
   EXPECT_TRUE(context->HasUnusedResourcesForTesting());
   task_environment_.FastForwardBy(base::Seconds(1));
 
@@ -820,6 +830,116 @@ TEST_P(BaseRenderingContext2DSharedImageSyncTokenTest,
   EXPECT_FALSE(context->HasUnusedResourcesForTesting());
   // And no new task is posted.
   EXPECT_FALSE(context->UnusedResourcesReclaimTimerIsRunningForTesting());
+}
+
+TEST_F(BaseRenderingContext2DSharedImageTest,
+       SingleBufferedSnapshotDoesNotSupportConcurrentReadWrite) {
+  V8TestingScope scope;
+  TestRenderingContext2D* context = CreateSingleBufferedContext(scope);
+  ASSERT_TRUE(context->IsSingleBuffered());
+
+  // Single buffered canvas supports concurrent read/write, allowing scanout
+  // while the canvas is drawn to.
+  scoped_refptr<ExportedCanvasResource> resource =
+      context->PaintRenderingResultsToResource(kBackBuffer,
+                                               FlushReason::kOther);
+  ASSERT_TRUE(resource);
+  scoped_refptr<gpu::ClientSharedImage> resource_si =
+      resource->GetSharedImageForTesting();
+  ASSERT_TRUE(resource_si);
+  EXPECT_TRUE(resource_si->usage().HasAll(
+      gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE |
+      gpu::SHARED_IMAGE_USAGE_SCANOUT));
+
+  // Single buffered snapshots do not support concurrent read/write because they
+  // are never re-written to.
+  scoped_refptr<StaticBitmapImage> snapshot =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot);
+  scoped_refptr<gpu::ClientSharedImage> snapshot_si =
+      snapshot->GetSharedImage();
+  ASSERT_TRUE(snapshot_si);
+  EXPECT_TRUE(snapshot_si->usage().Has(gpu::SHARED_IMAGE_USAGE_SCANOUT));
+  EXPECT_FALSE(
+      snapshot_si->usage().Has(gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE));
+}
+
+TEST_F(BaseRenderingContext2DSharedImageTest,
+       SingleBufferedSnapshotsAreCloned) {
+  V8TestingScope scope;
+  TestRenderingContext2D* context = CreateSingleBufferedContext(scope);
+  ASSERT_TRUE(context->IsSingleBuffered());
+
+  // Generate a first single-buffered frame.
+  scoped_refptr<ExportedCanvasResource> resource1 =
+      context->PaintRenderingResultsToResource(kBackBuffer,
+                                               FlushReason::kOther);
+  ASSERT_TRUE(resource1);
+  scoped_refptr<gpu::ClientSharedImage> resource1_si =
+      resource1->GetSharedImageForTesting();
+  ASSERT_TRUE(resource1_si);
+
+  // Taking a snapshot clones the frame.
+  scoped_refptr<StaticBitmapImage> snapshot1 =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot1);
+  scoped_refptr<gpu::ClientSharedImage> snapshot1_si =
+      snapshot1->GetSharedImage();
+  ASSERT_TRUE(snapshot1_si);
+  EXPECT_NE(snapshot1_si, resource1_si);
+
+  // The second frame reuses the same single buffered image.
+  context->fillRect(0, 0, 1, 1);
+  scoped_refptr<ExportedCanvasResource> resource2 =
+      context->PaintRenderingResultsToResource(kBackBuffer,
+                                               FlushReason::kOther);
+  ASSERT_TRUE(resource2);
+  EXPECT_EQ(resource2->GetSharedImageForTesting(), resource1_si);
+
+  // A second snapshot produces another distinct clone.
+  scoped_refptr<StaticBitmapImage> snapshot2 =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot2);
+  EXPECT_NE(snapshot2->GetSharedImage(), resource1_si);
+  EXPECT_NE(snapshot2->GetSharedImage(), snapshot1_si);
+}
+
+TEST_F(BaseRenderingContext2DSharedImageTest,
+       SingleBufferedSnapshotsAreCached) {
+  V8TestingScope scope;
+  TestRenderingContext2D* context = CreateSingleBufferedContext(scope);
+  ASSERT_TRUE(context->IsSingleBuffered());
+
+  // Take a first snapshot.
+  scoped_refptr<StaticBitmapImage> snapshot1 =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot1);
+  scoped_refptr<gpu::ClientSharedImage> snapshot1_si =
+      snapshot1->GetSharedImage();
+  ASSERT_TRUE(snapshot1_si);
+
+  // Taking another snapshot without drawing returns the same cached image.
+  scoped_refptr<StaticBitmapImage> snapshot1_repeat =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot1_repeat);
+  EXPECT_EQ(snapshot1_repeat->GetSharedImage(), snapshot1_si);
+
+  // Taking a snapshot after drawing produces another distinct image.
+  context->fillRect(0, 0, 1, 1);
+  scoped_refptr<StaticBitmapImage> snapshot2 =
+      context->PaintRenderingResultsToSnapshot(kBackBuffer);
+  ASSERT_TRUE(snapshot2);
+  EXPECT_NE(snapshot2->GetSharedImage(), snapshot1_si);
+}
+
+TEST_F(BaseRenderingContext2DSharedImageTest,
+       SingleBufferedSnapshotReturnsNullOnContextLoss) {
+  V8TestingScope scope;
+  TestRenderingContext2D* context = CreateSingleBufferedContext(scope);
+
+  test_context_provider_->GetTestRasterInterface()->LoseContextCHROMIUM(
+      GL_GUILTY_CONTEXT_RESET_ARB, GL_INNOCENT_CONTEXT_RESET_ARB);
+  EXPECT_EQ(context->Snapshot(), nullptr);
 }
 
 }  // namespace

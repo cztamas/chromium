@@ -479,7 +479,6 @@
 #include "url/url_constants.h"
 
 #if BUILDFLAG(IS_WIN)
-#include "base/files/file_util.h"
 #include "base/strings/string_tokenizer.h"
 #include "base/version.h"
 #include "base/win/win_util.h"
@@ -494,10 +493,6 @@
 #include "chrome/services/util_win/public/mojom/util_win.mojom.h"
 #include "content/public/browser/tracing_service.h"
 #include "sandbox/win/src/sandbox_policy.h"
-#include "services/webnn/public/cpp/webnn_buildflags.h"
-#if BUILDFLAG(WEBNN_USE_WEBGPU_ACCELERATOR)
-#include "services/webnn/public/mojom/features.mojom-features.h"
-#endif
 #elif BUILDFLAG(IS_MAC)
 #include "base/apple/foundation_util.h"
 #include "chrome/browser/browser_process_platform_part_mac.h"
@@ -565,6 +560,7 @@
 #include "chrome/common/chrome_descriptors_android.h"
 #include "components/browser_ui/accessibility/android/font_size_prefs_android.h"
 #include "components/crash/content/browser/child_exit_observer_android.h"
+#include "components/payments/content/android/payment_handler_window_android.h"
 #include "components/viz/common/features.h"
 #include "content/public/browser/android/java_interfaces.h"
 #include "services/service_manager/public/cpp/interface_provider.h"
@@ -887,16 +883,23 @@ BASE_FEATURE(kPrefetchRequestIntegrityHeaders,
 #endif
 
 // Returns the profile whose prefs are used to compute WebPreferences for
-// `web_contents`, which is its user profile, see webui::GetUserProfile(). A
-// WebContents in TopChromeWebUIProfile must have its user profile set before
-// its WebPreferences are first computed, see webui::SetUserProfile().
+// `web_contents`, which is its user profile, see webui::GetUserProfile().
+// Returns null only for the WebUI toolbar in TopChromeWebUIProfile, which may
+// load before its user profile is set, see webui::SetUserProfile(). Any other
+// WebContents in TopChromeWebUIProfile must set its user profile before its
+// WebPreferences are first computed.
 Profile* GetProfileForWebPreferences(content::WebContents* web_contents) {
 #if BUILDFLAG(IS_ANDROID)
   // There is no TopChromeWebUIProfile on Android.
   return Profile::FromBrowserContext(web_contents->GetBrowserContext());
 #else
   Profile* profile = webui::GetUserProfile(web_contents);
-  CHECK(profile);
+  if (!profile) {
+    const content::SecurityPrincipal& principal =
+        web_contents->GetSiteInstance()->GetSecurityPrincipal();
+    CHECK(principal.SchemeIs(content::kChromeUIScheme) &&
+          principal.GetHost() == chrome::kChromeUIWebUIToolbarHost);
+  }
   return profile;
 #endif  // BUILDFLAG(IS_ANDROID)
 }
@@ -1022,6 +1025,9 @@ blink::mojom::AutoplayPolicy DetermineWebContentsAutoplayPolicy(
   using PolicyStatus = AutoplayPolicyStatusObserver::PolicyStatus;
 
   Profile* profile = GetProfileForWebPreferences(web_contents);
+  if (!profile) {
+    return current_policy;
+  }
   PrefService* prefs = profile->GetPrefs();
 
   AutoplayPolicyStatusObserver* observer =
@@ -3405,8 +3411,13 @@ void ChromeContentBrowserClient::UpdateRendererPreferencesForWorker(
     blink::RendererPreferences* out_prefs) {
   CHECK(browser_context, base::NotFatalUntil::M163);
   CHECK(out_prefs, base::NotFatalUntil::M163);
-  renderer_preferences_util::UpdateFromSystemSettings(
-      out_prefs, Profile::FromBrowserContext(browser_context));
+  Profile* profile = Profile::FromBrowserContext(browser_context);
+  // TopChromeWebUIProfile only hosts Top Chrome WebUIs and does not have the
+  // user preferences that UpdateFromSystemSettings() depends on.
+  if (profile->IsTopChromeWebUIProfile()) {
+    return;
+  }
+  renderer_preferences_util::UpdateFromSystemSettings(out_prefs, profile);
 }
 
 content::AllowServiceWorkerResult
@@ -4718,9 +4729,6 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
     WebContents* web_contents,
     content::SiteInstance& main_frame_site,
     WebPreferences* web_prefs) {
-  Profile* profile = GetProfileForWebPreferences(web_contents);
-  PrefService* prefs = profile->GetPrefs();
-
   const bool is_initial_webui =
       waap::IsForInitialWebUI(main_frame_site.GetSecurityPrincipal());
   if (is_initial_webui) {
@@ -4728,7 +4736,8 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
     // layout_constants_v0.css rather than user web-content font preferences.
     // Clearing the default generic font maps avoids populating FontFamilyCache
     // during startup prewarming and prevents prewarming or loading unused
-    // default web fonts such as "Times New Roman".
+    // default web fonts such as "Times New Roman". This does not depend on the
+    // user profile, so binding one later does not change fonts.
     web_prefs->standard_font_family_map.clear();
     web_prefs->fixed_font_family_map.clear();
     web_prefs->serif_font_family_map.clear();
@@ -4737,6 +4746,14 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
     web_prefs->fantasy_font_family_map.clear();
     web_prefs->math_font_family_map.clear();
   }
+
+  Profile* profile = GetProfileForWebPreferences(web_contents);
+  // A WebContents in TopChromeWebUIProfile keeps the default WebPreferences
+  // until its user profile is bound, which recomputes them.
+  if (!profile) {
+    return;
+  }
+  PrefService* prefs = profile->GetPrefs();
 
 // Fill font preferences. These are not registered on Android unless we're built
 // with extensions (the chrome.fontSettings API can change these).
@@ -5159,6 +5176,10 @@ bool ChromeContentBrowserClient::OverrideWebPreferencesAfterNavigation(
         web_contents, main_frame_site, web_prefs);
   }
 
+  if (!profile) {
+    return prefs_changed;
+  }
+
   const auto old_in_forced_colors = web_prefs->in_forced_colors;
   const auto old_is_forced_colors_disabled =
       web_prefs->is_forced_colors_disabled;
@@ -5210,8 +5231,11 @@ bool ChromeContentBrowserClient::
     WebPreferencesNeedUpdateForColorRelatedStateChanges(
         WebContents& web_contents,
         const SiteInstance& main_frame_site) const {
-  const WebPreferences& prefs = web_contents.GetOrCreateWebPreferences();
   Profile* profile = GetProfileForWebPreferences(&web_contents);
+  if (!profile) {
+    return false;
+  }
+  const WebPreferences& prefs = web_contents.GetOrCreateWebPreferences();
   const PrefService& pref_service = *profile->GetPrefs();
   return GetPreferredContrast(pref_service) != prefs.preferred_contrast ||
          GetForcedColorsForWebContent(&web_contents, pref_service) !=
@@ -5228,8 +5252,11 @@ bool ChromeContentBrowserClient::
 ui::ColorProviderKey::ForcedColors
 ChromeContentBrowserClient::GetForcedColorsForWebContents(
     WebContents& web_contents) const {
-  return PageColorsController::GetEffectivePageColors(
-             *GetProfileForWebPreferences(&web_contents)->GetPrefs())
+  Profile* profile = GetProfileForWebPreferences(&web_contents);
+  if (!profile) {
+    return ui::ColorProviderKey::ForcedColors::kNone;
+  }
+  return PageColorsController::GetEffectivePageColors(*profile->GetPrefs())
       .forced_colors;
 }
 
@@ -5599,23 +5626,6 @@ bool ChromeContentBrowserClient::PreSpawnChild(
   if (result != sandbox::SBOX_ALL_OK) {
     return false;
   }
-
-  // Allow loading the WebNN WebGPU accelerator for renderers when the feature
-  // is enabled.
-#if BUILDFLAG(WEBNN_USE_WEBGPU_ACCELERATOR)
-  if (sandbox_type == sandbox::mojom::Sandbox::kRenderer &&
-      base::FeatureList::IsEnabled(
-          webnn::mojom::features::kWebNNLiteRTGpuInRenderer)) {
-    const base::FilePath accelerator_path =
-        GetModulePath(L"libLiteRtWebGpuAccelerator.dll");
-    if (base::PathExists(accelerator_path)) {
-      result = config->AllowExtraDll(accelerator_path.value());
-      if (result != sandbox::SBOX_ALL_OK) {
-        return false;
-      }
-    }
-  }
-#endif
 #endif  // !defined(COMPONENT_BUILD) && !defined(ADDRESS_SANITIZER)
   return true;
 }
@@ -7823,6 +7833,18 @@ bool ChromeContentBrowserClient::ShowPaymentHandlerWindow(
     const std::optional<gfx::Size>& preferred_web_contents_size,
     base::OnceCallback<void(bool, int, int)> callback) {
 #if BUILDFLAG(IS_ANDROID)
+  if (base::FeatureList::IsEnabled(
+          blink::features::kPaymentHandlerStaticCustomSize)) {
+    // Android only uses the height; the sheet is always full width.
+    payments::android::ShowPaymentHandlerWindow(
+        url,
+        preferred_web_contents_size
+            ? std::make_optional(preferred_web_contents_size->height())
+            : std::nullopt,
+        std::move(callback));
+    return true;
+  }
+  // Fall back to opening the window via ServiceTabLauncher.
   return false;
 #else
   payments::PaymentRequestDisplayManagerFactory::GetInstance()

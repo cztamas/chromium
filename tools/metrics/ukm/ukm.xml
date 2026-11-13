@@ -1127,6 +1127,21 @@ be describing additional metrics about the same event.
       </history>
     </aggregation>
   </metric>
+  <metric name="AverageViewportAdCountX100_V2">
+    <summary>
+      The estimated average viewport ad count accumulated over the page load
+      time, multiplied by 100, rounded to the nearest integer, linearly bucketed
+      with a bucket size of 10, and capped at 500. This provides 0.1 ad
+      granularity up to 5.0 ads.
+    </summary>
+    <aggregation>
+      <history>
+        <statistics>
+          <quantiles type="std-percentiles"/>
+        </statistics>
+      </history>
+    </aggregation>
+  </metric>
   <metric name="AverageViewportAdDensity">
     <summary>
       The estimated average viewport ad density. Each density value is
@@ -7854,39 +7869,18 @@ be describing additional metrics about the same event.
       The number of times the Compose result was inserted into the page. Uses
       exponential buckets for privacy.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="MenuItemClicked">
     <summary>
       The number of times the Compose context menu item was clicked for an
       element on the page. Uses exponential buckets for privacy.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="MenuItemShown">
     <summary>
       The number of times the Compose context menu item was shown for an element
       on the page. Uses exponential buckets for privacy.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="MissingFormData">
     <summary>
@@ -7921,13 +7915,6 @@ be describing additional metrics about the same event.
       during this page load. Recorded everytime the nudge is opened. Added in
       M126.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="ProactiveNudgeShouldShow">
     <summary>
@@ -7935,13 +7922,6 @@ be describing additional metrics about the same event.
       page load. Recorded any time Compose is asked to show the proactive nudge
       even if it is eventually not shown. Added in M125.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="ProactiveNudgeShown">
     <summary>
@@ -7949,13 +7929,6 @@ be describing additional metrics about the same event.
       load. Recorded everytime a request to show the nudge returns true. Added
       in M126.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -8126,13 +8099,6 @@ be describing additional metrics about the same event.
       The control type, such as text or textarea. See
       |autofill::FormControlType|.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="EditingTime">
     <summary>
@@ -8159,13 +8125,6 @@ be describing additional metrics about the same event.
     <summary>
       Whether the field is detected and supported by Autofill.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="TypedCharacterCount">
     <summary>
@@ -8175,13 +8134,6 @@ be describing additional metrics about the same event.
       count only typed changes, but is not always accurate. Additionally, there
       is a limit to the total possible length observed.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="TypedWordCount">
     <summary>
@@ -8192,13 +8144,6 @@ be describing additional metrics about the same event.
       accurate. Additionally, there is a limit to the total possible length
       observed.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -9288,13 +9233,6 @@ be describing additional metrics about the same event.
       permission. The exponential bucketing is applied for privacy reasons by
       using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="DeclarativeNetRequestPermissionCount">
     <summary>
@@ -9302,13 +9240,6 @@ be describing additional metrics about the same event.
       permission. The exponential bucketing is applied for privacy reasons by
       using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="DeclarativeNetRequestWithHostAccessPermissionCount">
     <summary>
@@ -9317,13 +9248,6 @@ be describing additional metrics about the same event.
       is applied for privacy reasons by using
       ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="DeclarativeWebRequestPermissionCount">
     <summary>
@@ -9331,13 +9255,6 @@ be describing additional metrics about the same event.
       permission. The exponential bucketing is applied for privacy reasons by
       using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="EnabledExtensionCount">
     <summary>
@@ -9359,13 +9276,6 @@ be describing additional metrics about the same event.
       navigation target URL. The exponential bucketing is applied for privacy
       reasons by using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="EnabledExtensionCount.InjectContentScript">
     <summary>
@@ -9373,13 +9283,6 @@ be describing additional metrics about the same event.
       exponential bucketing is applied for privacy reasons by using
       ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WebRequestAuthProviderPermissionCount">
     <summary>
@@ -9387,13 +9290,6 @@ be describing additional metrics about the same event.
       permission. The exponential bucketing is applied for privacy reasons by
       using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WebRequestBlockingPermissionCount">
     <summary>
@@ -9401,13 +9297,6 @@ be describing additional metrics about the same event.
       permission. The exponential bucketing is applied for privacy reasons by
       using ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WebRequestPermissionCount">
     <summary>
@@ -9415,13 +9304,6 @@ be describing additional metrics about the same event.
       exponential bucketing is applied for privacy reasons by using
       ukm::GetExponentialBucketMin(value, 2).
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -13472,7 +13354,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Media.EME.CdmMetrics">
-  <owner>frs@chromium.org</owner>
+  <owner>sangbaekpark@chromium.org</owner>
   <owner>vpasupathy@chromium.org</owner>
   <owner>media-dev@chromium.org</owner>
   <summary>
@@ -13738,7 +13620,7 @@ be describing additional metrics about the same event.
 </event>
 
 <event name="Media.EME.GetStatusForPolicy">
-  <owner>frs@chromium.org</owner>
+  <owner>sangbaekpark@chromium.org</owner>
   <owner>media-dev@chromium.org</owner>
   <summary>
     Event recorded when the EME API GetStatusForPolicy promise is resolved.
@@ -19099,13 +18981,6 @@ be describing additional metrics about the same event.
       Records whether a form is an OTP form, a normal multi-use password form,
       or a combination of both.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -19121,13 +18996,6 @@ be describing additional metrics about the same event.
     <summary>
       True if there was a password form detected on the page.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -19178,13 +19046,6 @@ be describing additional metrics about the same event.
       user. Obsolete: The metric is not recorded in M131+. However this entry is
       kept to gather UKM data from pre-M131 clients.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -19306,13 +19167,6 @@ be describing additional metrics about the same event.
       Records if a site supports .well-known/change-password and if a url
       override was used or not.
     </summary>
-    <aggregation>
-      <history>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -25490,124 +25344,51 @@ be describing additional metrics about the same event.
     <summary>
       The compilation was running asynchronously.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Cached" enum="Boolean">
     <summary>
       The compilation was re-using already cached native module code instead of
       JIT compiling it.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="CodeSize">
     <summary>
       The size of the native module code in bytes after baseline compilation
       finished.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Deserialized" enum="Boolean">
     <summary>
       The compilation was deserializing the native module code from the disk
       cache instead of JIT compiling it.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Lazy" enum="Boolean">
     <summary>
       The lazy compilation flag was enabled and therefore not all functions
       might have been compiled.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="LiftoffBailoutCount">
     <summary>
       The number of functions that Liftoff could not compile and that therefore
       needed to be compiled by TurboFan.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Streamed" enum="Boolean">
     <summary>
       The wire bytes were streamed while compiling.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Success" enum="Boolean">
     <summary>
       The module was successfully compiled.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <index fields="profile.system_ram"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WallClockDuration">
     <summary>
       The total time the compilation took in microseconds.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -25633,27 +25414,11 @@ be describing additional metrics about the same event.
     <summary>
       The size of the wire bytes of the module.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Streamed" enum="Boolean">
     <summary>
       The wire bytes were streamed while decoding.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Success" enum="Boolean">
     <summary>
@@ -25673,14 +25438,6 @@ be describing additional metrics about the same event.
     <summary>
       The total time the decoding took in microseconds.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -25694,41 +25451,16 @@ be describing additional metrics about the same event.
     <summary>
       The number of functions imported by the module.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Success" enum="Boolean">
     <summary>
       The module was successfully instantiated.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <index fields="profile.system_ram"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WallClockDuration">
     <summary>
       The total time the instantiation took in microseconds.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -25743,41 +25475,17 @@ be describing additional metrics about the same event.
       The size of the native module code in bytes after top-tier compilation
       finished.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="Lazy" enum="Boolean">
     <summary>
       The lazy compilation flag was enabled and therefore not all functions
       might have been compiled.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <enumeration/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
   <metric name="WallClockDuration">
     <summary>
       The total time the compilation took in microseconds.
     </summary>
-    <aggregation>
-      <history>
-        <index fields="profile.form_factor"/>
-        <statistics>
-          <quantiles type="std-percentiles"/>
-        </statistics>
-      </history>
-    </aggregation>
   </metric>
 </event>
 
@@ -27370,6 +27078,40 @@ be describing additional metrics about the same event.
     <summary>
       Records the result of the Web Install API for the URL of the requesting
       page that invoked the API.
+    </summary>
+  </metric>
+</event>
+
+<event name="WebAuthn.AmbientSignIn">
+  <owner>kenrb@chromium.org</owner>
+  <owner>chrome-webauthn@google.com</owner>
+  <summary>
+    Information about a WebAuthn Ambient sign-in request and its UI outcomes.
+  </summary>
+  <metric name="BubbleOutcome" enum="AmbientUkmBubbleOutcome">
+    <summary>
+      Recorded when a user interacts with the Ambient UI bubble, or when the
+      bubble is destroyed without user interaction.
+    </summary>
+  </metric>
+  <metric name="ChipOnlyOutcome" enum="AmbientChipOnlyOutcome">
+    <summary>
+      Recorded when the Ambient UI chip has been shown without the bubble,
+      indicating whether the user clicked on the chip to display a bubble or
+      ignored it.
+    </summary>
+  </metric>
+  <metric name="DisplayOutcome" enum="AmbientUkmDisplayOutcome">
+    <summary>
+      Recorded upon invocation of an Ambient WebAuthn request for a passkey or
+      password sign-in, indicating whether Ambient UI was shown or why it was
+      not shown.
+    </summary>
+  </metric>
+  <metric name="InitialUiMode" enum="AmbientInitialUiMode">
+    <summary>
+      Recorded when Ambient UI is shown, indicating whether the bubble or only
+      the chip was initially shown and why.
     </summary>
   </metric>
 </event>

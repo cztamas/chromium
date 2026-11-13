@@ -4,6 +4,8 @@
 
 #include "chrome/browser/glic/experimental_triggering/glic_experimental_triggering_coordinator.h"
 
+#include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -14,6 +16,7 @@
 #include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/run_loop.h"
+#include "base/supports_user_data.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/test/bind.h"
 #include "base/test/metrics/histogram_tester.h"
@@ -26,11 +29,13 @@
 #include "chrome/browser/actor/actor_keyed_service_factory.h"
 #include "chrome/browser/actor/actor_surface_registry.h"
 #include "chrome/browser/actor/actor_task.h"
+#include "chrome/browser/actor/actor_test_util.h"
 #include "chrome/browser/actor/ui/test_support/mock_actor_ui_tab_controller.h"
 #include "chrome/browser/enterprise/browser_management/management_service_factory.h"
 #include "chrome/browser/glic/actor/glic_actor_policy_checker.h"
 #include "chrome/browser/glic/actor/glic_actor_task_manager.h"
 #include "chrome/browser/glic/experimental_opt_in/glic_experimental_opt_in_controller.h"
+#include "chrome/browser/glic/experimental_triggering/actor_log.h"
 #include "chrome/browser/glic/experimental_triggering/glic_experimental_triggering_manager.h"
 #include "chrome/browser/glic/experimental_triggering/glic_experimental_triggering_metrics.h"
 #include "chrome/browser/glic/experimental_triggering/glic_experimental_triggering_types.h"
@@ -56,6 +61,8 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/actor/core/actor_features.h"
+#include "components/actor/core/aggregated_journal.h"
+#include "components/actor/core/journal_details_builder.h"
 #include "components/actor/public/mojom/actor_types.mojom.h"
 #include "components/optimization_guide/content/browser/page_content_proto_util.h"
 #include "components/policy/core/common/management/management_service.h"
@@ -222,15 +229,19 @@ class GlicExperimentalTriggeringCoordinatorTest : public testing::Test {
     profile_ = profile_manager_.CreateTestingProfile(
         "test_profile", std::move(testing_factories));
 
+    auto* actor_service =
+        actor::ActorKeyedServiceFactory::GetActorKeyedService(profile_);
+    ASSERT_TRUE(actor_service);
+    journal_recorder_ = std::make_unique<actor::ActorJournalRecorder>(
+        actor_service->GetJournal());
+
     coordinator_ =
         std::make_unique<TestGlicExperimentalTriggeringCoordinator>(profile_);
     OptIn();
 
     actor_policy_checker_ = std::make_unique<GlicActorPolicyChecker>(*profile_);
     actor_task_manager_ = std::make_unique<GlicActorTaskManager>(
-        profile_,
-        actor::ActorKeyedServiceFactory::GetActorKeyedService(profile_),
-        *actor_policy_checker_,
+        profile_, actor_service, *actor_policy_checker_,
         /*instance_metrics=*/nullptr,
         /*sharing_manager=*/nullptr,
         /*delegate=*/nullptr);
@@ -245,6 +256,7 @@ class GlicExperimentalTriggeringCoordinatorTest : public testing::Test {
     coordinator_.reset();
     actor_task_manager_.reset();
     actor_policy_checker_.reset();
+    journal_recorder_.reset();
     profile_ = nullptr;
   }
 
@@ -302,16 +314,71 @@ class GlicExperimentalTriggeringCoordinatorTest : public testing::Test {
 
   std::optional<ExperimentalTriggeringResponse> SendRequest(
       const ExperimentalTriggeringRequest& request,
-      tabs::TabInterface* prepared_tab = nullptr) {
+      tabs::TabInterface* prepared_tab = nullptr,
+      const std::string& context_id = kTestContextId) {
     if (prepared_tab) {
       coordinator_->set_active_tab(prepared_tab);
     }
     return coordinator_->OnRequest(
-        kTestContextId, request,
+        context_id, request,
         ScopedIncomingMessageResultLogger(
             GlicMetricReporter(profile_),
             ScopedIncomingMessageResultLogger::Channel::kSharingMessage),
         base::DoNothing(), nullptr);
+  }
+
+  void ExpectHandlerDestroyed(
+      const base::HistogramTester& tester,
+      GlicExperimentalTriggeringHandlerDestroyReason reason,
+      base::HistogramBase::Count32 count = 1,
+      std::string_view context_id = kTestContextId) {
+    for (const char* name :
+         {"Glic.ExperimentalTriggering.UpdatesHandlerDestroyed",
+          "Glic.Consumer.ExperimentalTriggering.UpdatesHandlerDestroyed"}) {
+      tester.ExpectUniqueSample(name, reason, count);
+    }
+    if (!journal_recorder_) {
+      return;
+    }
+    auto entries = journal_recorder_->GetEntries("UpdatesHandlerDestroyed");
+    ASSERT_EQ(entries.size(), static_cast<size_t>(count));
+    for (const auto& entry : entries) {
+      EXPECT_EQ(entry.track_uuid,
+                actor::MakeGlicExperimentalTriggeringTrackUUID(context_id));
+      EXPECT_THAT(
+          entry.details,
+          testing::IsSupersetOf(
+              {testing::Pair("context_id", std::string(context_id)),
+               testing::Pair(
+                   "reason",
+                   std::string(
+                       ExperimentalTriggeringHandlerDestroyReasonToString(
+                           reason)))}));
+    }
+  }
+
+  void ExpectSequenceAnomalyCount(
+      const base::HistogramTester& tester,
+      GlicExperimentalTriggeringSequenceAnomaly anomaly,
+      base::HistogramBase::Count32 count) {
+    for (const char* name :
+         {"Glic.ExperimentalTriggering.SequenceAnomaly",
+          "Glic.Consumer.ExperimentalTriggering.SequenceAnomaly"}) {
+      tester.ExpectBucketCount(name, anomaly, count);
+    }
+  }
+
+  void ExpectSequenceAnomalyTotalCount(const base::HistogramTester& tester,
+                                       base::HistogramBase::Count32 count) {
+    for (const char* name :
+         {"Glic.ExperimentalTriggering.SequenceAnomaly",
+          "Glic.Consumer.ExperimentalTriggering.SequenceAnomaly"}) {
+      tester.ExpectTotalCount(name, count);
+    }
+    if (journal_recorder_) {
+      EXPECT_EQ(journal_recorder_->GetEntries("SequenceAnomaly").size(),
+                static_cast<size_t>(count));
+    }
   }
 
  protected:
@@ -325,6 +392,7 @@ class GlicExperimentalTriggeringCoordinatorTest : public testing::Test {
   TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal()};
   raw_ptr<TestingProfile> profile_;
   GlicProfileManager glic_profile_manager_;
+  std::unique_ptr<actor::ActorJournalRecorder> journal_recorder_;
   std::unique_ptr<TestGlicExperimentalTriggeringCoordinator> coordinator_;
   testing::NiceMock<TestExperimentalTriggeringManager> test_triggering_manager_;
   testing::NiceMock<MockGlicInstance> mock_glic_instance_;
@@ -1044,9 +1112,10 @@ class GlicExperimentalTriggeringCoordinatorWithTabTest
   std::optional<ExperimentalTriggeringResponse> SendRequestWithCallback(
       const ExperimentalTriggeringRequest& request,
       GlicExperimentalTriggeringUpdateCallback update_callback,
-      tabs::TabInterface* prepared_tab = nullptr) {
+      tabs::TabInterface* prepared_tab = nullptr,
+      const std::string& context_id = kTestContextId) {
     return coordinator_->OnRequest(
-        kTestContextId, request,
+        context_id, request,
         ScopedIncomingMessageResultLogger(
             GlicMetricReporter(profile_),
             ScopedIncomingMessageResultLogger::Channel::kSharingMessage),
@@ -1541,6 +1610,18 @@ INSTANTIATE_TEST_SUITE_P(
       return info.param.test_name;
     });
 
+// Without a live session, a request that fails early still cleans up the
+// handler that it created.
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       TriggerActuationNotOptedInWithoutSession_CleansUpHandler) {
+  OptOut();
+
+  ExpectFailedTaskUpdate(SendRequest(CreateRequest(
+                             TriggerActuationRequest{.initial_prompt = "hi"})),
+                         "User is not opted in to experimental triggering.");
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+}
+
 // Handlers are shared per context id, so a request that fails early with a
 // non-terminal reply must not tear down a live session on the same context
 // (b/574916669). The tests below cover one such failure per request type, first
@@ -1554,11 +1635,23 @@ TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
   features.InitAndDisableFeature(
       features::kGlicExperimentalTriggeringOptInTabFocus);
   StartActuationSession();
+  base::HistogramTester histogram_tester;
   // Without a tab there is no WebContents to show the opt-in dialog in.
   coordinator_->set_active_tab(nullptr);
 
-  EXPECT_TRUE(SendRequestToLiveSession(CreateRequest(DeviceOptInRequest{}))
-                  .has_value());
+  auto response = SendRequestToLiveSession(CreateRequest(DeviceOptInRequest{}));
+  ASSERT_TRUE(response.has_value());
+  ASSERT_TRUE(response->device_opt_in_result.has_value());
+  EXPECT_EQ(*response->device_opt_in_result, DeviceOptInResult::kFailed);
+  // The live session keeps its handler, so no outcome is recorded for it.
+  histogram_tester.ExpectBucketCount(
+      "Glic.ExperimentalTriggering.ExecutionOutcome",
+      GlicExperimentalTriggeringExecutionOutcome::kDestroyedBeforeCompletion,
+      0);
+  histogram_tester.ExpectBucketCount(
+      "Glic.Consumer.ExperimentalTriggering.ExecutionOutcome",
+      GlicExperimentalTriggeringExecutionOutcome::kDestroyedBeforeCompletion,
+      0);
 }
 
 TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
@@ -1571,6 +1664,34 @@ TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
   ASSERT_TRUE(response->confirmation_result.has_value());
   EXPECT_EQ(response->confirmation_result->status,
             ConfirmationResult::Status::kErrorUnavailable);
+}
+
+// Once actuation starts, the invocation succeeds and is no longer pending, but
+// the task keeps running. A request during the task must not tear down its
+// handler: only the Glic instance shows that the task still runs.
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       RequestAfterInvocationSucceeded_KeepsHandler) {
+  base::OnceClosure on_success;
+  EXPECT_CALL(*mock_glic_service(),
+              InvokeWithAutoSubmit(testing::_, testing::_, testing::_))
+      .WillOnce([&](InvokeWithAutoSubmitPasskey passkey,
+                    GlicInvokeOptions options,
+                    GlicInvokeWithAutoSubmitOptions auto_submit_options) {
+        on_success = std::move(options.on_success);
+        return mock_glic_instance_.GetWeakPtr();
+      });
+  StartActuationSession();
+  // GlicInvokeHandler posts `on_success` when actuation starts.
+  ASSERT_TRUE(on_success);
+  std::move(on_success).Run();
+
+  base::HistogramTester histogram_tester;
+  EXPECT_FALSE(SendRequestToLiveSession(CreateRequest(TaskMetadataUpdated{}))
+                   .has_value());
+  histogram_tester.ExpectBucketCount(
+      "Glic.ExperimentalTriggering.ExecutionOutcome",
+      GlicExperimentalTriggeringExecutionOutcome::kDestroyedBeforeCompletion,
+      0);
 }
 
 TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
@@ -3015,6 +3136,7 @@ struct SessionEndTestCase {
       mojom::ExperimentalTriggeringUpdateType::kUnknown;
   TaskUpdate::State expected_state;
   bool expect_cancel_task;
+  GlicExperimentalTriggeringHandlerDestroyReason expected_destroy_reason;
 };
 
 class GlicExperimentalTriggeringCoordinatorSessionEndTest
@@ -3024,6 +3146,7 @@ class GlicExperimentalTriggeringCoordinatorSessionEndTest
 TEST_P(GlicExperimentalTriggeringCoordinatorSessionEndTest,
        StopsOwnedWorkAndEndsSession) {
   const SessionEndTestCase& test_case = GetParam();
+  base::HistogramTester destroy_tester;
   // An invocation is in progress on the instance. GlicInstance can't tell
   // whether it is this handler's, so it is left alone.
   ON_CALL(mock_glic_instance_, IsInvoking())
@@ -3050,10 +3173,13 @@ TEST_P(GlicExperimentalTriggeringCoordinatorSessionEndTest,
       break;
   }
   ExpectNextUpdate(test_case.expected_state);
-  if (test_case.end == SessionEndTestCase::End::kDestroy) {
-    return;
+  if (test_case.end != SessionEndTestCase::End::kDestroy) {
+    ExpectSessionEnded();
+    ASSERT_TRUE(base::test::RunUntil([&]() {
+      return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+    }));
   }
-  ExpectSessionEnded();
+  ExpectHandlerDestroyed(destroy_tester, test_case.expected_destroy_reason);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -3067,31 +3193,48 @@ INSTANTIATE_TEST_SUITE_P(
             .type =
                 mojom::ExperimentalTriggeringUpdateType::kTerminalCompletion,
             .expected_state = TaskUpdate::State::kComplete,
-            .expect_cancel_task = false},
+            .expect_cancel_task = false,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::
+                    kSessionComplete},
         SessionEndTestCase{
             .test_name = "TerminalStopped",
             .end = SessionEndTestCase::End::kUpdate,
             .type = mojom::ExperimentalTriggeringUpdateType::kTerminalStopped,
             .expected_state = TaskUpdate::State::kStopped,
-            .expect_cancel_task = true},
+            .expect_cancel_task = true,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::
+                    kSessionStopped},
         SessionEndTestCase{
             .test_name = "TerminalFailed",
             .end = SessionEndTestCase::End::kUpdate,
             .type = mojom::ExperimentalTriggeringUpdateType::kTerminalFailed,
             .expected_state = TaskUpdate::State::kFailed,
-            .expect_cancel_task = true},
-        SessionEndTestCase{.test_name = "ErrorObservation",
-                           .end = SessionEndTestCase::End::kErrorObservation,
-                           .expected_state = TaskUpdate::State::kFailed,
-                           .expect_cancel_task = true},
+            .expect_cancel_task = true,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kSessionFailed},
+        SessionEndTestCase{
+            .test_name = "ErrorObservation",
+            .end = SessionEndTestCase::End::kErrorObservation,
+            .expected_state = TaskUpdate::State::kFailed,
+            .expect_cancel_task = true,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kSessionFailed},
         SessionEndTestCase{.test_name = "Disconnect",
                            .end = SessionEndTestCase::End::kDisconnect,
                            .expected_state = TaskUpdate::State::kFailed,
-                           .expect_cancel_task = true},
+                           .expect_cancel_task = true,
+                           .expected_destroy_reason =
+                               GlicExperimentalTriggeringHandlerDestroyReason::
+                                   kClientDisconnected},
         SessionEndTestCase{.test_name = "DestroyedMidTask",
                            .end = SessionEndTestCase::End::kDestroy,
                            .expected_state = TaskUpdate::State::kFailed,
-                           .expect_cancel_task = true}),
+                           .expect_cancel_task = true,
+                           .expected_destroy_reason =
+                               GlicExperimentalTriggeringHandlerDestroyReason::
+                                   kCoordinatorShutdown}),
     [](const testing::TestParamInfo<SessionEndTestCase>& info) {
       return info.param.test_name;
     });
@@ -3101,6 +3244,7 @@ struct InvokeErrorTestCase {
   bool create_actor_task;
   GlicInvokeError error;
   bool expect_cancel_task;
+  GlicExperimentalTriggeringHandlerDestroyReason expected_destroy_reason;
 };
 
 class GlicExperimentalTriggeringCoordinatorInvokeErrorTest
@@ -3110,6 +3254,7 @@ class GlicExperimentalTriggeringCoordinatorInvokeErrorTest
 TEST_P(GlicExperimentalTriggeringCoordinatorInvokeErrorTest,
        SendsFailedAndEndsSession) {
   const InvokeErrorTestCase& test_case = GetParam();
+  base::HistogramTester destroy_tester;
   base::OnceCallback<void(GlicInvokeError, std::string)> on_error;
   ExpectInvocation(on_error, /*client_connects=*/true);
   EXPECT_CALL(mock_glic_instance_, CancelTask())
@@ -3123,29 +3268,57 @@ TEST_P(GlicExperimentalTriggeringCoordinatorInvokeErrorTest,
   std::move(on_error).Run(test_case.error, std::string());
   ExpectNextUpdate(TaskUpdate::State::kFailed);
   ExpectSessionEnded();
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+  ExpectHandlerDestroyed(destroy_tester, test_case.expected_destroy_reason);
 }
 
 INSTANTIATE_TEST_SUITE_P(
     ,
     GlicExperimentalTriggeringCoordinatorInvokeErrorTest,
     testing::Values(
-        InvokeErrorTestCase{.test_name = "AfterActorTask",
-                            .create_actor_task = true,
-                            .error = GlicInvokeError::kTabClosed,
-                            .expect_cancel_task = true},
+        InvokeErrorTestCase{
+            .test_name = "AfterActorTask",
+            .create_actor_task = true,
+            .error = GlicInvokeError::kTabClosed,
+            .expect_cancel_task = true,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kTabClosed},
         // The client connected, but the invocation failed before an actor
         // task was created, for example before the prompt was sent. An actor
         // task that is active on the instance belongs to another caller.
-        InvokeErrorTestCase{.test_name = "BeforeActorTask",
-                            .create_actor_task = false,
-                            .error = GlicInvokeError::kTimeout,
-                            .expect_cancel_task = false},
+        InvokeErrorTestCase{
+            .test_name = "BeforeActorTask",
+            .create_actor_task = false,
+            .error = GlicInvokeError::kTimeout,
+            .expect_cancel_task = false,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kInvokeError},
+        InvokeErrorTestCase{
+            .test_name = "InvokeInProgress",
+            .create_actor_task = false,
+            .error = GlicInvokeError::kInvokeInProgress,
+            .expect_cancel_task = false,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kInvokeError},
+        InvokeErrorTestCase{
+            .test_name = "InstanceDestroyedArchived",
+            .create_actor_task = false,
+            .error = GlicInvokeError::kInstanceDestroyedArchived,
+            .expect_cancel_task = false,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::
+                    kInstanceDestroyed},
         // The superseding invocation doesn't start an actor task for this
         // handler.
-        InvokeErrorTestCase{.test_name = "Superseded",
-                            .create_actor_task = false,
-                            .error = GlicInvokeError::kSuperseded,
-                            .expect_cancel_task = false}),
+        InvokeErrorTestCase{
+            .test_name = "Superseded",
+            .create_actor_task = false,
+            .error = GlicInvokeError::kSuperseded,
+            .expect_cancel_task = false,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kSuperseded}),
     [](const testing::TestParamInfo<InvokeErrorTestCase>& info) {
       return info.param.test_name;
     });
@@ -3249,7 +3422,9 @@ INSTANTIATE_TEST_SUITE_P(
 TEST_F(GlicExperimentalTriggeringCoordinatorTerminalUpdateTest,
        StaleCleanupDoesNotDeleteNewHandler) {
   // The invocation succeeds without a Glic instance, so the handler has no
-  // live work left, but has not sent a terminal update.
+  // live work left, but has not sent a terminal update. So the Trigger deletes
+  // it right away: its destructor sends FAILED and posts a cleanup for the same
+  // context id.
   EXPECT_CALL(*mock_glic_service(),
               InvokeWithAutoSubmit(testing::_, testing::_, testing::_))
       .WillOnce([](InvokeWithAutoSubmitPasskey passkey,
@@ -3259,13 +3434,10 @@ TEST_F(GlicExperimentalTriggeringCoordinatorTerminalUpdateTest,
         return base::WeakPtr<GlicInstance>();
       })
       .WillRepeatedly(testing::DoDefault());
-  StartSession();
-
-  // The next request deletes that handler. Its destructor sends FAILED and
-  // posts a cleanup for the same context id.
-  EXPECT_FALSE(SendRequestWithCallback(CreateRequest(TaskMetadataUpdated{}),
-                                       updates_.GetRepeatingCallback())
-                   .has_value());
+  auto first = SendTrigger();
+  ASSERT_TRUE(first.has_value());
+  ASSERT_TRUE(first->task_update.has_value());
+  EXPECT_EQ(first->task_update->state, TaskUpdate::State::kStarting);
   ExpectNextUpdate(TaskUpdate::State::kFailed);
   EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
 
@@ -6006,6 +6178,677 @@ TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
       "Glic.ExperimentalTriggering.ExecutionOutcome",
       GlicExperimentalTriggeringExecutionOutcome::kDestroyedBeforeCompletion,
       1);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorOptInTest,
+       UpdatesHandlerDestroyed_RecordsIdleAfterOptInAndWithoutSession) {
+  base::HistogramTester histogram_tester;
+
+  // 1. Completed DeviceOptInRequest destroys the handler with kIdle.
+  base::test::TestFuture<ExperimentalTriggeringResponse> opt_in_future;
+  EXPECT_FALSE(SendRequestWithCallback(CreateRequest(DeviceOptInRequest{}),
+                                       opt_in_future.GetRepeatingCallback())
+                   .has_value());
+  ASSERT_TRUE(opt_in_future.Wait());
+  EXPECT_EQ(*opt_in_future.Take().device_opt_in_result,
+            DeviceOptInResult::kAccepted);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+
+  // 2. Stateless helper request with no active session also destroys with
+  // kIdle.
+  EXPECT_FALSE(SendRequest(CreateRequest(TaskMetadataUpdated{})).has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+
+  ExpectHandlerDestroyed(histogram_tester,
+                         GlicExperimentalTriggeringHandlerDestroyReason::kIdle,
+                         /*count=*/2);
+  for (const auto& entry :
+       journal_recorder_->GetEntries("UpdatesHandlerDestroyed")) {
+    EXPECT_THAT(
+        entry.details,
+        UnorderedElementsAre(
+            Pair("context_id", std::string(kTestContextId)),
+            Pair("reason", "Idle"), Pair("has_instance", "false"),
+            Pair("has_actions_runner", "false"),
+            Pair("awaiting_opt_in", "false"), Pair("pending_invoke_count", "0"),
+            Pair("is_actuation_started", "false"),
+            Pair("terminal_update_sent", "false")));
+  }
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_RecordsIdleAfterExecuteActions) {
+  base::HistogramTester histogram_tester;
+  auto* user_data = optimization_guide::DocumentIdentifierUserData::
+      GetOrCreateForCurrentDocument(web_contents_->GetPrimaryMainFrame());
+  ExperimentalTriggeringRequest request = CreateExecuteScriptToolRequest(
+      mock_tab_.GetHandle().raw_value(), user_data->serialized_token());
+
+  base::test::TestFuture<ExperimentalTriggeringResponse> update_future;
+  SendRequestWithCallback(request, update_future.GetRepeatingCallback(),
+                          &mock_tab_);
+  ASSERT_TRUE(update_future.Take().execute_actions_response.has_value());
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+
+  ExpectHandlerDestroyed(histogram_tester,
+                         GlicExperimentalTriggeringHandlerDestroyReason::kIdle);
+}
+
+struct InstanceTeardownDestroyReasonTestCase {
+  const char* test_name;
+  GlicExperimentalTriggeringManager::InstanceTeardownReason teardown_reason;
+  GlicExperimentalTriggeringHandlerDestroyReason expected_destroy_reason;
+};
+
+class GlicExperimentalTriggeringCoordinatorInstanceTeardownTest
+    : public GlicExperimentalTriggeringCoordinatorWithTabTest,
+      public testing::WithParamInterface<
+          InstanceTeardownDestroyReasonTestCase> {};
+
+TEST_P(GlicExperimentalTriggeringCoordinatorInstanceTeardownTest,
+       UpdatesHandlerDestroyed_RecordsReason) {
+  const InstanceTeardownDestroyReasonTestCase& test_case = GetParam();
+  base::HistogramTester tester;
+
+  StartActuationSession();
+  test_triggering_manager_.NotifyInstanceWillBeDestroyed(
+      test_case.teardown_reason);
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+
+  ExpectHandlerDestroyed(tester, test_case.expected_destroy_reason);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    ,
+    GlicExperimentalTriggeringCoordinatorInstanceTeardownTest,
+    testing::Values(
+        InstanceTeardownDestroyReasonTestCase{
+            .test_name = "TabClosed",
+            .teardown_reason = GlicExperimentalTriggeringManager::
+                InstanceTeardownReason::kTabClosed,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::kTabClosed},
+        InstanceTeardownDestroyReasonTestCase{
+            .test_name = "InstanceDestroyed",
+            .teardown_reason = GlicExperimentalTriggeringManager::
+                InstanceTeardownReason::kInstanceDestroyed,
+            .expected_destroy_reason =
+                GlicExperimentalTriggeringHandlerDestroyReason::
+                    kInstanceDestroyed}),
+    [](const testing::TestParamInfo<InstanceTeardownDestroyReasonTestCase>&
+           info) { return info.param.test_name; });
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_RecordsSessionStoppedOnSyncStop) {
+  base::HistogramTester tester;
+  StartActuationSession();
+  ASSERT_TRUE(
+      SendRequest(CreateRequest(StopActuationRequest{.stop_reason = "stop"}))
+          .has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+  ExpectHandlerDestroyed(
+      tester, GlicExperimentalTriggeringHandlerDestroyReason::kSessionStopped);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_RecordsRejectedSynchronouslyOnOptedOutTrigger) {
+  base::HistogramTester tester;
+  OptOut();
+  ASSERT_TRUE(SendRequest(CreateRequest(
+                              TriggerActuationRequest{.initial_prompt = "no"}))
+                  .has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+  ExpectHandlerDestroyed(
+      tester,
+      GlicExperimentalTriggeringHandlerDestroyReason::kRejectedSynchronously);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_RecordsRegistrationFailed) {
+  base::HistogramTester tester;
+  test_triggering_manager_.set_registration_success(false);
+  StartActuationSession();
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+  ExpectHandlerDestroyed(
+      tester,
+      GlicExperimentalTriggeringHandlerDestroyReason::kRegistrationFailed);
+}
+
+TEST_F(
+    GlicExperimentalTriggeringCoordinatorWithTabTest,
+    UpdatesHandlerDestroyed_RecordsUnexpectedLiveWithoutInstanceOrTerminalUpdate) {
+  base::HistogramTester tester;
+  base::OnceClosure invoke_on_success;
+  EXPECT_CALL(*mock_glic_service(),
+              InvokeWithAutoSubmit(testing::_, testing::_, testing::_))
+      .WillOnce([&invoke_on_success](InvokeWithAutoSubmitPasskey,
+                                     GlicInvokeOptions options,
+                                     GlicInvokeWithAutoSubmitOptions) {
+        invoke_on_success = std::move(options.on_success);
+        return base::WeakPtr<GlicInstance>();
+      });
+
+  // Invocation completes asynchronously without binding a GlicInstance
+  // (`is_actuation_started_=true`, `!terminal_update_sent_`, `!HasLiveWork()`),
+  // and a subsequent `TaskMetadataUpdated` triggers cleanup of the un-ended
+  // actuation session.
+  StartActuationSession();
+  ASSERT_TRUE(invoke_on_success);
+  std::move(invoke_on_success).Run();
+  EXPECT_FALSE(SendRequest(CreateRequest(TaskMetadataUpdated{})).has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+  ExpectHandlerDestroyed(tester,
+                         GlicExperimentalTriggeringHandlerDestroyReason::
+                             kUnexpectedLiveDestruction);
+  EXPECT_THAT(
+      journal_recorder_->GetEntries("UpdatesHandlerDestroyed")[0].details,
+      UnorderedElementsAre(
+          Pair("context_id", std::string(kTestContextId)),
+          Pair("reason", "UnexpectedLiveDestruction"),
+          Pair("has_instance", "false"), Pair("has_actions_runner", "false"),
+          Pair("awaiting_opt_in", "false"), Pair("pending_invoke_count", "0"),
+          Pair("is_actuation_started", "true"),
+          Pair("terminal_update_sent", "false")));
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_PreservesSessionEndReasonOnCoordinatorShutdown) {
+  base::HistogramTester tester;
+  StartActuationSession();
+  auto update = mojom::ExperimentalTriggeringUpdate::New();
+  update->type = mojom::ExperimentalTriggeringUpdateType::kTerminalCompletion;
+  test_triggering_manager_.SendUpdate(
+      std::move(update), mojom::SubscriberObservationType::kUpdate);
+  test_triggering_manager_.FlushForTesting();
+  ASSERT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 1u);
+
+  coordinator_.reset();
+  ExpectHandlerDestroyed(
+      tester, GlicExperimentalTriggeringHandlerDestroyReason::kSessionComplete);
+  EXPECT_THAT(
+      journal_recorder_->GetEntries("UpdatesHandlerDestroyed")[0].details,
+      IsSupersetOf({Pair("terminal_update_sent", "true")}));
+}
+
+// Owns a coordinator as `Profile` `SupportsUserData::Data` so it is torn down
+// inside `~SupportsUserData()` during `TestingProfile` destruction—after
+// `PerformInterlockedTwoPhaseShutdown()` has run `MarkContextDead()` and
+// destroyed `ActorKeyedService`—without running a second shutdown pass.
+class PostContextDeadCoordinatorHolder : public base::SupportsUserData::Data {
+ public:
+  PostContextDeadCoordinatorHolder(
+      std::unique_ptr<TestGlicExperimentalTriggeringCoordinator> coordinator,
+      base::OnceClosure on_before_destroy)
+      : coordinator_(std::move(coordinator)),
+        on_before_destroy_(std::move(on_before_destroy)) {}
+
+  ~PostContextDeadCoordinatorHolder() override {
+    if (on_before_destroy_) {
+      std::move(on_before_destroy_).Run();
+    }
+    coordinator_.reset();
+  }
+
+ private:
+  std::unique_ptr<TestGlicExperimentalTriggeringCoordinator> coordinator_;
+  base::OnceClosure on_before_destroy_;
+};
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       UpdatesHandlerDestroyed_LateWorkBeforeCleanupRecordsUnexpectedLive) {
+  base::HistogramTester tester;
+  base::OnceCallback<void(GlicInvokeError, std::string)> on_error;
+  EXPECT_CALL(*mock_glic_service(),
+              InvokeWithAutoSubmit(testing::_, testing::_, testing::_))
+      .WillOnce([&on_error](InvokeWithAutoSubmitPasskey,
+                            GlicInvokeOptions options,
+                            GlicInvokeWithAutoSubmitOptions) {
+        on_error = options.TakeOnErrorWithDiagnostics(
+            GlicApiTestPasskeys::GetErrorDiagnosticsPassKey());
+        return base::WeakPtr<GlicInstance>();
+      });
+
+  StartActuationSession();
+  ASSERT_TRUE(on_error);
+  std::move(on_error).Run(GlicInvokeError::kInvokeInProgress, std::string());
+  ASSERT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 1u);
+
+  // Start async ExecuteActions work on the same context before the posted
+  // `CleanupAsync()` task from `OnInvokeError` runs. When `CleanupAsync()`
+  // executes first on the task queue while `actions_runner_` is still live, it
+  // must record `kUnexpectedLiveDestruction` rather than `kInvokeError`.
+  auto* user_data = optimization_guide::DocumentIdentifierUserData::
+      GetOrCreateForCurrentDocument(web_contents_->GetPrimaryMainFrame());
+  ExperimentalTriggeringRequest exec_req = CreateExecuteScriptToolRequest(
+      mock_tab_.GetHandle().raw_value(), user_data->serialized_token());
+  SendRequestWithCallback(exec_req, base::DoNothing(), &mock_tab_);
+
+  ASSERT_TRUE(base::test::RunUntil([&]() {
+    return coordinator_->GetUpdatesHandlerMapSizeForTesting() == 0;
+  }));
+  ExpectHandlerDestroyed(tester,
+                         GlicExperimentalTriggeringHandlerDestroyReason::
+                             kUnexpectedLiveDestruction);
+  EXPECT_THAT(
+      journal_recorder_->GetEntries("UpdatesHandlerDestroyed")[0].details,
+      IsSupersetOf({Pair("has_actions_runner", "true"),
+                    Pair("terminal_update_sent", "true")}));
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorTest,
+       UpdatesHandlerDestroyed_SafeDuringPostContextDeadShutdown) {
+  auto* actor_service =
+      actor::ActorKeyedServiceFactory::GetActorKeyedService(profile_);
+  ASSERT_TRUE(actor_service);
+  base::WeakPtr<actor::ActorKeyedService> actor_service_weak =
+      actor_service->GetWeakPtr();
+
+  MockBrowserWindowInterface shutdown_window;
+  ON_CALL(shutdown_window, GetProfile())
+      .WillByDefault(testing::Return(profile_.get()));
+  coordinator_->set_browser_window(&shutdown_window);
+
+  ExperimentalTriggeringRequest req;
+  req.version = 1;
+  req.context_id = "ctx_phase2";
+  req.task_metadata = TaskMetadata{.conversation_id = "conv_123"};
+  req.payload = TriggerActuationRequest{.initial_prompt = "go"};
+  ASSERT_TRUE(
+      SendRequest(req, /*prepared_tab=*/nullptr, "ctx_phase2").has_value());
+  ASSERT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 1u);
+  coordinator_->set_browser_window(nullptr);
+
+  // Tear down the fixture's `"test_profile"` rather than creating a second
+  // `TestingProfile`: on Android, `GCMDriver` enforces a process-wide Java
+  // singleton (`sInstance == null`) and throws `IllegalStateException` if two
+  // profiles instantiate `GCMDriverAndroid` concurrently.
+  bool destroyed_after_actor_service = false;
+  TestingProfile* profile_to_delete = profile_;
+  profile_ = nullptr;
+  actor_task_manager_.reset();
+  actor_policy_checker_.reset();
+  journal_recorder_.reset();
+
+  static const int kCoordinatorHolderKey = 0;
+  profile_to_delete->SetUserData(
+      &kCoordinatorHolderKey,
+      std::make_unique<PostContextDeadCoordinatorHolder>(
+          std::move(coordinator_),
+          base::BindLambdaForTesting(
+              [&destroyed_after_actor_service, actor_service_weak]() {
+                destroyed_after_actor_service = !actor_service_weak;
+              })));
+  profile_to_delete = nullptr;
+
+  // Deleting `"test_profile"` through `TestingProfileManager` runs
+  // `PerformInterlockedTwoPhaseShutdown()` once and destroys
+  // `PostContextDeadCoordinatorHolder`—and with it `coordinator_`—after both
+  // `MarkContextDead()` and `~ActorKeyedService()`.
+  base::HistogramTester tester;
+  profile_manager_.DeleteTestingProfile("test_profile");
+  EXPECT_TRUE(destroyed_after_actor_service);
+  ExpectHandlerDestroyed(
+      tester,
+      GlicExperimentalTriggeringHandlerDestroyReason::kCoordinatorShutdown);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       SequenceAnomaly_NormalUnsetNegativeAndDroppedAdvanceRecordNothing) {
+  base::HistogramTester histogram_tester;
+
+  // 1. Legacy/unset and negative sentinel sequence numbers record no anomalies.
+  ExperimentalTriggeringRequest unset_trigger =
+      CreateRequest(TriggerActuationRequest{.initial_prompt = "legacy"});
+  unset_trigger.context_id = "ctx_legacy";
+  unset_trigger.task_metadata = TaskMetadata{
+      .conversation_id = "conv_legacy",
+      .sender_sequence_number = -1,
+      .last_seen_sequence_number = -1,
+  };
+  ASSERT_TRUE(SendRequest(unset_trigger, /*prepared_tab=*/nullptr, "ctx_legacy")
+                  .has_value());
+
+  // 2. Well-ordered multi-turn sequence + dropped duplicate-start with
+  // advancing sequence number records no anomalies.
+  base::test::TestFuture<ExperimentalTriggeringResponse> updates;
+  ExperimentalTriggeringRequest trigger =
+      CreateRequest(TriggerActuationRequest{.initial_prompt = "turn 1"});
+  trigger.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 0,
+      .last_seen_sequence_number = std::nullopt,
+  };
+  auto start_resp =
+      SendRequestWithCallback(trigger, updates.GetRepeatingCallback());
+  ASSERT_TRUE(start_resp.has_value());
+  EXPECT_EQ(start_resp->task_metadata->sender_sequence_number, 0);
+
+  // Dropped duplicate Trigger with seq=1 advances the anomaly high-water mark
+  // to 1 without mutating the running session's last_seen_sequence_number_.
+  ExperimentalTriggeringRequest dup_trigger =
+      CreateRequest(TriggerActuationRequest{.initial_prompt = "dup"});
+  dup_trigger.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 1,
+      .last_seen_sequence_number = 0,
+  };
+  EXPECT_FALSE(SendRequest(dup_trigger).has_value());
+
+  auto yield_update = mojom::ExperimentalTriggeringUpdate::New();
+  yield_update->type = mojom::ExperimentalTriggeringUpdateType::kYieldToUser;
+  yield_update->data = "question";
+  test_triggering_manager_.SendUpdate(
+      std::move(yield_update), mojom::SubscriberObservationType::kUpdate);
+  test_triggering_manager_.FlushForTesting();
+  auto yield_resp = updates.Take();
+  EXPECT_EQ(yield_resp.task_metadata->sender_sequence_number, 1);
+  // Running task kept its last_seen_sequence_number = 0 despite dropped seq=1.
+  EXPECT_EQ(yield_resp.task_metadata->last_seen_sequence_number, 0);
+
+  ExperimentalTriggeringRequest cont =
+      CreateRequest(ContinueActuationRequest{.continuation_prompt = "turn 2"});
+  cont.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 2,
+      .last_seen_sequence_number = 1,
+  };
+  ASSERT_TRUE(SendRequestWithCallback(cont, updates.GetRepeatingCallback())
+                  .has_value());
+
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 0);
+}
+
+TEST_F(
+    GlicExperimentalTriggeringCoordinatorWithTabTest,
+    SequenceAnomaly_RecreatedHandlerRecordsSingleMostSpecificStreamRestartedBucket) {
+  base::HistogramTester histogram_tester;
+
+  // Continuation arriving at a brand-new handler (sent_reply_count=0,
+  // prev_max_seen=none) with sender_sequence_number=1 and
+  // last_seen_sequence_number=0 matches both StreamRestarted and
+  // MissingHistory, but records only the single most specific bucket
+  // (kStreamRestarted) while still advancing max_seen_request_sequence_number_
+  // to 1.
+  ExperimentalTriggeringRequest cont =
+      CreateRequest(ContinueActuationRequest{.continuation_prompt = "resume"});
+  cont.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 1,
+      .last_seen_sequence_number = 0,
+  };
+  ASSERT_TRUE(SendRequest(cont).has_value());
+
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kStreamRestarted, 1);
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kMissingHistory, 0);
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 1);
+
+  auto events = journal_recorder_->GetEntries("SequenceAnomaly");
+  ASSERT_EQ(events.size(), 1u);
+  EXPECT_EQ(events[0].track_uuid,
+            actor::MakeGlicExperimentalTriggeringTrackUUID(kTestContextId));
+  EXPECT_THAT(events[0].details,
+              UnorderedElementsAre(
+                  Pair("context_id", std::string(kTestContextId)),
+                  Pair("anomaly", "StreamRestarted"),
+                  Pair("request_type", "ContinueActuationRequest"),
+                  Pair("request_seq", "1"), Pair("request_last_seen", "0"),
+                  Pair("handler_max_seen_request_seq", "none"),
+                  Pair("handler_sent_count", "0")));
+
+  // Follow-up in-order request with seq=2 and last_seen=0 (<
+  // sent_reply_count=1) confirms max_seen_request_sequence_number_ advanced to
+  // 1 on the first request (records 0 additional anomalies).
+  ExperimentalTriggeringRequest meta = CreateRequest(TaskMetadataUpdated{});
+  meta.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 2,
+      .last_seen_sequence_number = 0,
+  };
+  EXPECT_FALSE(SendRequest(meta).has_value());
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 1);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorOptInTest,
+       SequenceAnomaly_DeviceOptInRetryExemptFromDuplicateOrReplayedRequest) {
+  base::HistogramTester histogram_tester;
+  base::test::TestFuture<ExperimentalTriggeringResponse> opt_in_future;
+
+  ExperimentalTriggeringRequest opt_in_req =
+      CreateRequest(DeviceOptInRequest{});
+  opt_in_req.task_metadata = TaskMetadata{
+      .conversation_id = "conv_opt_in",
+      .sender_sequence_number = 0,
+      .last_seen_sequence_number = std::nullopt,
+  };
+
+  // First Sync opt-in opens the pending dialog (`awaiting_opt_in_ == true`).
+  EXPECT_FALSE(
+      SendRequestWithCallback(opt_in_req, opt_in_future.GetRepeatingCallback())
+          .has_value());
+  ASSERT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 1u);
+
+  // Resumed Sync opt-in retry stamps sender_sequence_number = 0 again while the
+  // dialog handler is still open; exempted from kDuplicateOrReplayedRequest.
+  EXPECT_FALSE(
+      SendRequestWithCallback(opt_in_req, opt_in_future.GetRepeatingCallback())
+          .has_value());
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 0);
+
+  ASSERT_TRUE(opt_in_future.Wait());
+  EXPECT_EQ(*opt_in_future.Take().device_opt_in_result,
+            DeviceOptInResult::kAccepted);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       SequenceAnomaly_StopAndTaskMetadataUpdatedExemptOnFreshHandler) {
+  base::HistogramTester histogram_tester;
+
+  ExperimentalTriggeringRequest metadata_req =
+      CreateRequest(TaskMetadataUpdated{});
+  metadata_req.context_id = "ctx_meta";
+  metadata_req.task_metadata = TaskMetadata{
+      .conversation_id = "conv_1",
+      .sender_sequence_number = 3,
+      .last_seen_sequence_number = 2,
+  };
+  EXPECT_FALSE(SendRequest(metadata_req, /*prepared_tab=*/nullptr, "ctx_meta")
+                   .has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+
+  ExperimentalTriggeringRequest stop_req =
+      CreateRequest(StopActuationRequest{.stop_reason = "cancel"});
+  stop_req.context_id = "ctx_stop";
+  stop_req.task_metadata = TaskMetadata{
+      .conversation_id = "conv_1",
+      .sender_sequence_number = 4,
+      .last_seen_sequence_number = 2,
+  };
+  EXPECT_TRUE(
+      SendRequest(stop_req, /*prepared_tab=*/nullptr, "ctx_stop").has_value());
+  EXPECT_EQ(coordinator_->GetUpdatesHandlerMapSizeForTesting(), 0u);
+
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 0);
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       SequenceAnomaly_OutOfOrderAndDuplicateReplayUseMonotonicHighWaterMark) {
+  base::HistogramTester histogram_tester;
+  base::test::TestFuture<ExperimentalTriggeringResponse> updates;
+
+  // Initial trigger: seq=0, sends STARTING at reply seq=0 (sent_reply_count=1).
+  ExperimentalTriggeringRequest trigger =
+      CreateRequest(TriggerActuationRequest{.initial_prompt = "start"});
+  trigger.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 0,
+      .last_seen_sequence_number = std::nullopt,
+  };
+  ASSERT_TRUE(SendRequestWithCallback(trigger, updates.GetRepeatingCallback())
+                  .has_value());
+
+  // 1. Replayed TriggerActuationRequest with seq=0: evaluated before
+  // IsDuplicateStart(), records kDuplicateOrReplayedRequest while dropped.
+  EXPECT_FALSE(SendRequest(trigger).has_value());
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kDuplicateOrReplayedRequest,
+      1);
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 1);
+
+  // 2. Non-start TaskMetadataUpdated with seq=2 and last_seen=1 (>= 1 sent):
+  // LastSeenAheadOfSent takes precedence over RequestGap (1 bucket per request)
+  // while still advancing max_seen to 2.
+  ExperimentalTriggeringRequest ahead_with_gap =
+      CreateRequest(TaskMetadataUpdated{});
+  ahead_with_gap.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 2,
+      .last_seen_sequence_number = 1,
+  };
+  EXPECT_FALSE(
+      SendRequestWithCallback(ahead_with_gap, updates.GetRepeatingCallback())
+          .has_value());
+
+  // 3. Out-of-order late non-start TaskMetadataUpdated with seq=1 (<
+  // max_seen=2): records kDuplicateOrReplayedRequest and MUST NOT regress
+  // max_seen or last_seen_sequence_number_ from 2 back to 1.
+  ExperimentalTriggeringRequest late_seq_1 =
+      CreateRequest(TaskMetadataUpdated{});
+  late_seq_1.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 1,
+      .last_seen_sequence_number = 0,
+  };
+  EXPECT_FALSE(
+      SendRequestWithCallback(late_seq_1, updates.GetRepeatingCallback())
+          .has_value());
+
+  // Verify outgoing async update still echoes last_seen_sequence_number = 2
+  // (not regressed to 1).
+  auto worklog = mojom::ExperimentalTriggeringUpdate::New();
+  worklog->type = mojom::ExperimentalTriggeringUpdateType::kWorklog;
+  worklog->data = "step";
+  test_triggering_manager_.SendUpdate(
+      std::move(worklog), mojom::SubscriberObservationType::kUpdate);
+  test_triggering_manager_.FlushForTesting();
+  EXPECT_EQ(updates.Take().task_metadata->last_seen_sequence_number, 2);
+
+  // 4. Next in-order TaskMetadataUpdated with seq=3 and valid last_seen=1
+  // (< sent_reply_count=2): records ZERO anomalies (no spurious gap!).
+  ExperimentalTriggeringRequest in_order_3 =
+      CreateRequest(TaskMetadataUpdated{});
+  in_order_3.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 3,
+      .last_seen_sequence_number = 1,
+  };
+  EXPECT_FALSE(SendRequest(in_order_3).has_value());
+
+  // 5. TaskMetadataUpdated jumping from max_seen=3 to seq=5 with valid
+  // last_seen=1 (< sent_reply_count=2): records kRequestGap.
+  ExperimentalTriggeringRequest gap_to_5 = CreateRequest(TaskMetadataUpdated{});
+  gap_to_5.task_metadata = TaskMetadata{
+      .conversation_id = "conv_123",
+      .sender_sequence_number = 5,
+      .last_seen_sequence_number = 1,
+  };
+  EXPECT_FALSE(SendRequest(gap_to_5).has_value());
+
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kDuplicateOrReplayedRequest,
+      2);
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kLastSeenAheadOfSent, 1);
+  ExpectSequenceAnomalyCount(
+      histogram_tester, GlicExperimentalTriggeringSequenceAnomaly::kRequestGap,
+      1);
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 4);
+
+  auto events = journal_recorder_->GetEntries("SequenceAnomaly");
+  ASSERT_EQ(events.size(), 4u);
+  EXPECT_THAT(events[0].details,
+              UnorderedElementsAre(
+                  Pair("context_id", std::string(kTestContextId)),
+                  Pair("anomaly", "DuplicateOrReplayedRequest"),
+                  Pair("request_type", "TriggerActuationRequest"),
+                  Pair("request_seq", "0"), Pair("request_last_seen", "none"),
+                  Pair("handler_max_seen_request_seq", "0"),
+                  Pair("handler_sent_count", "1")));
+  EXPECT_THAT(events[1].details,
+              UnorderedElementsAre(
+                  Pair("context_id", std::string(kTestContextId)),
+                  Pair("anomaly", "LastSeenAheadOfSent"),
+                  Pair("request_type", "TaskMetadataUpdated"),
+                  Pair("request_seq", "2"), Pair("request_last_seen", "1"),
+                  Pair("handler_max_seen_request_seq", "0"),
+                  Pair("handler_sent_count", "1")));
+  EXPECT_THAT(events[2].details,
+              UnorderedElementsAre(
+                  Pair("context_id", std::string(kTestContextId)),
+                  Pair("anomaly", "DuplicateOrReplayedRequest"),
+                  Pair("request_type", "TaskMetadataUpdated"),
+                  Pair("request_seq", "1"), Pair("request_last_seen", "0"),
+                  Pair("handler_max_seen_request_seq", "2"),
+                  Pair("handler_sent_count", "1")));
+  EXPECT_THAT(events[3].details,
+              UnorderedElementsAre(
+                  Pair("context_id", std::string(kTestContextId)),
+                  Pair("anomaly", "RequestGap"),
+                  Pair("request_type", "TaskMetadataUpdated"),
+                  Pair("request_seq", "5"), Pair("request_last_seen", "1"),
+                  Pair("handler_max_seen_request_seq", "3"),
+                  Pair("handler_sent_count", "2")));
+}
+
+TEST_F(GlicExperimentalTriggeringCoordinatorWithTabTest,
+       SequenceAnomaly_Int64MaxDoesNotOverflow) {
+  base::HistogramTester histogram_tester;
+  constexpr int64_t kMaxSeq = std::numeric_limits<int64_t>::max();
+
+  ExperimentalTriggeringRequest trigger =
+      CreateRequest(TriggerActuationRequest{.initial_prompt = "max"});
+  trigger.task_metadata = TaskMetadata{
+      .conversation_id = "conv_max",
+      .sender_sequence_number = kMaxSeq,
+      .last_seen_sequence_number = std::nullopt,
+  };
+  ASSERT_TRUE(SendRequest(trigger).has_value());
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kMissingHistory, 1);
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 1);
+
+  // Duplicate INT64_MAX must classify as kDuplicateOrReplayedRequest without
+  // signed integer overflow on +1.
+  ExperimentalTriggeringRequest dup_max = CreateRequest(TaskMetadataUpdated{});
+  dup_max.task_metadata = TaskMetadata{
+      .conversation_id = "conv_max",
+      .sender_sequence_number = kMaxSeq,
+      .last_seen_sequence_number = 0,
+  };
+  EXPECT_FALSE(SendRequest(dup_max).has_value());
+  ExpectSequenceAnomalyCount(
+      histogram_tester,
+      GlicExperimentalTriggeringSequenceAnomaly::kDuplicateOrReplayedRequest,
+      1);
+  ExpectSequenceAnomalyCount(
+      histogram_tester, GlicExperimentalTriggeringSequenceAnomaly::kRequestGap,
+      0);
+  ExpectSequenceAnomalyTotalCount(histogram_tester, 2);
 }
 
 }  // namespace

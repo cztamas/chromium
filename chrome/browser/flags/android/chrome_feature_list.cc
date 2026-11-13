@@ -127,7 +127,6 @@ const base::Feature* const kFeaturesExposedToJava[] = {
 // FEATURE_EXPORT_LIST_START
 // go/keep-sorted start
     &autofill::features::kAutofillAiAvailableByDefault,
-    &autofill::features::kAutofillAiEditEntitiesFromSaveUpdatePrompt,
     &autofill::features::kAutofillAiLimitSuggestionWidth,
     &autofill::features::kAutofillAiOnlineModelToggleNewTitle,
     &autofill::features::kAutofillAiReauthRequired,
@@ -180,6 +179,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &content_capture::features::kContentCaptureSendMetadataForDataShare,
     &content_settings::kDarkenWebsitesCheckboxInThemesSetting,
     &contextual_tasks::kContextualTasks,
+    &contextual_tasks::kContextualTasksEntryPoints,
     &contextual_tasks::kContextualTasksSidePanel,
     &credential_management::features::kCredentialManagementThirdPartyWebApiRequestForwarding,
     &critical_actions::features::kCriticalActionHistory,
@@ -208,6 +208,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &features::kElasticOverscroll,
     &features::kEmailVerificationProtocol,
     &features::kEnableFullscreenToAnyScreenAndroid,
+    &features::kFedCmPermissionUiWithContainer,
     &features::kGenericSensorExtraClasses,
     &features::kGlic,
     &features::kGlicAndroidTablet,
@@ -569,6 +570,7 @@ const base::Feature* const kFeaturesExposedToJava[] = {
     &kUserEducationFramework,
     &kUserEducationInterruptiveCooldownGroup,
     &kVerifyStartupSigninState,
+    &kVirtualKeyboardLiveHeightOnceSettled,
     &kVirtualKeyboardResizesContentTransientOvershootFix,
     &kVirtualKeyboardTransientInnerHeightFix,
     &kWebApkMinShellVersion,
@@ -753,7 +755,7 @@ BASE_FEATURE(kAndroidTabDeclutterArchiveOnDesktop, base::FEATURE_DISABLED_BY_DEF
 BASE_FEATURE(kAndroidTabDeclutterDedupeTabIdsKillSwitch, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidTabPersistentStoreActiveTabPrefs, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidTabSkipSaveTabsKillswitch,"AndroidTabSkipSaveTabsTaskKillswitch", base::FEATURE_ENABLED_BY_DEFAULT);
-BASE_FEATURE(kAndroidTabUiRefactor, base::FEATURE_DISABLED_BY_DEFAULT);
+BASE_FEATURE(kAndroidTabUiRefactor, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidTabstripStartupCaptureBugFix, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidThemeModule, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kAndroidThemeResourceProvider, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -1039,6 +1041,7 @@ BASE_FEATURE(kUserEducationFramework, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kUserEducationInterruptiveCooldownGroup, base::FEATURE_DISABLED_BY_DEFAULT);
 // Verify sign-in state on startup.
 BASE_FEATURE(kVerifyStartupSigninState, base::FEATURE_ENABLED_BY_DEFAULT);
+BASE_FEATURE(kVirtualKeyboardLiveHeightOnceSettled, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kVirtualKeyboardResizesContentTransientOvershootFix, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kVirtualKeyboardTransientInnerHeightFix, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kWebAppNavigationBarThemeColor, base::FEATURE_ENABLED_BY_DEFAULT);

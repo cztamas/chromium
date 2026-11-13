@@ -19,6 +19,7 @@
 #include "cc/paint/paint_record.h"
 #include "components/viz/common/gpu/context_lost_observer.h"
 #include "components/viz/common/gpu/raster_context_provider.h"
+#include "gpu/command_buffer/client/shared_image_pool.h"
 #include "gpu/command_buffer/common/shared_image_usage.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_canvas_fill_rule.h"
 #include "third_party/blink/renderer/bindings/modules/v8/v8_image_smoothing_quality.h"
@@ -67,7 +68,6 @@ class Vector2d;
 
 namespace blink {
 
-class Canvas2DResourceProvider;
 class CanvasContextCreationAttributesCore;
 class CanvasImageProvider;
 class CanvasRenderingContext2DSettings;
@@ -94,6 +94,7 @@ enum class RasterMode;
 class MODULES_EXPORT BaseRenderingContext2D
     : public CanvasRenderingContext,
       public Canvas2DRecorderContext,
+      public CanvasResourceSharedImage::Client,
       public MemoryManagedPaintRecorder::Client,
       public FlushForImageObserver,
       public CanvasMemoryDumpClient,
@@ -394,12 +395,11 @@ class MODULES_EXPORT BaseRenderingContext2D
                                  bool clear_frame,
                                  FlushReason reason) {}
 
-  bool HasSharedImageBacking() const;
+  bool HasSharedImagePool() const;
   void SetResourceRecyclingEnabled(bool value);
-  void CreateSharedImageProvider(
-      RasterMode raster_mode,
-      gpu::SharedImageUsageSet shared_image_usage_flags);
-  void CreateSharedImageProviderForSoftwareCompositor();
+  void CreateSharedImagePool(RasterMode raster_mode,
+                             gpu::SharedImageUsageSet shared_image_usage_flags);
+  void CreateSharedImagePoolForSoftwareCompositor();
   void CreateSoftwareSurface();
   void RecordBackingHistograms();
   scoped_refptr<StaticBitmapImage> Snapshot();
@@ -436,6 +436,11 @@ class MODULES_EXPORT BaseRenderingContext2D
 
   scoped_refptr<StaticBitmapImage> UnacceleratedSnapshot();
 
+  // CanvasResourceSharedImage::Client implementation.
+  void OnResourceRefReturned(
+      scoped_refptr<CanvasResourceSharedImage> resource) override;
+  void OnDestroyResource() override { --num_inflight_resources_; }
+
   // CanvasMemoryDumpClient implementation.
   void OnMemoryDump(base::trace_event::ProcessMemoryDump*) override;
   size_t GetSize() const override;
@@ -449,7 +454,8 @@ class MODULES_EXPORT BaseRenderingContext2D
   // BitmapGpuChannelLostObserver implementation.
   void OnGpuChannelLost() override;
 
-  void ResetSharedImageBacking();
+  void ResetSharedImagePool();
+  void ClearUnusedResources();
   scoped_refptr<CanvasResourceSharedImage> NewOrRecycledResource();
   gpu::raster::RasterInterface* RasterInterface() const;
   bool IsGpuContextLost() const;
@@ -472,24 +478,29 @@ class MODULES_EXPORT BaseRenderingContext2D
   static constexpr int kMaxRecycledCanvasResources = 3;
 
   Canvas2DColorParams color_params_;
-  std::unique_ptr<Canvas2DResourceProvider> shared_image_provider_;
+  // If this instance is single-buffered or `resource_recycling_enabled_` is
+  // false, `image_pool_` will not recycle resources.
+  std::unique_ptr<gpu::SharedImagePool<CanvasResourceSharedImage>> image_pool_;
   scoped_refptr<CanvasResourceSharedImage> resource_;
   bool is_accelerated_ = false;
+  bool resource_recycling_enabled_ = true;
+  int num_inflight_resources_ = 0;
+  int max_inflight_resources_ = 0;
   sk_sp<SkSurface> surface_;
   std::unique_ptr<CanvasImageProvider> canvas_image_provider_;
-  // Initialized on GPU-composited `shared_image_provider_` creation and
-  // checked to determine whether that backing's GPU context is still live.
+  // Initialized on GPU-composited SharedImage backing creation and checked to
+  // determine whether that backing's GPU context is still live.
   base::WeakPtr<WebGraphicsContext3DProviderWrapper> context_provider_wrapper_;
   // Lazily initialized when creating a software `canvas_image_provider_` while
   // `context_provider_wrapper_` is null (either because the backing is not a
   // GPU-composited SharedImage, or in the gap between GPU context destruction
   // clearing `context_provider_wrapper_` and `ResetBacking()` tearing down a
-  // CPU-raster GPU-composited `shared_image_provider_`), so that `this` can
+  // CPU-raster GPU-composited SharedImage backing), so that `this` can
   // observe wrapper destruction (to reset `canvas_image_provider_`) and
   // unregister itself on backing reset/destruction. Kept separate from
   // `context_provider_wrapper_` so that acquiring a new wrapper for software
-  // `CanvasImageProvider` does not make a dead GPU-composited
-  // `shared_image_provider_` appear valid.
+  // `CanvasImageProvider` does not make a dead GPU-composited SharedImage
+  // backing appear valid.
   base::WeakPtr<WebGraphicsContext3DProviderWrapper>
       sw_image_provider_context_provider_wrapper_;
   base::WeakPtr<WebGraphicsSharedImageInterfaceProvider>
@@ -524,6 +535,8 @@ class MODULES_EXPORT BaseRenderingContext2D
   base::RepeatingClosure on_restore_failed_callback_for_testing_;
   Vector<scoped_refptr<const cc::AnimatedImageFrameIndexMap>>
       animated_image_frame_index_maps_;
+  base::WeakPtrFactory<CanvasResourceSharedImage::Client>
+      resource_client_weak_ptr_factory_{this};
 };
 
 }  // namespace blink

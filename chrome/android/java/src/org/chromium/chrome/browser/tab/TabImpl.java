@@ -67,6 +67,7 @@ import org.chromium.chrome.browser.content.ContentUtils;
 import org.chromium.chrome.browser.content.WebContentsFactory;
 import org.chromium.chrome.browser.desktop_site.DesktopSiteUtils;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
+import org.chromium.chrome.browser.history.HistoryManagerUtils;
 import org.chromium.chrome.browser.native_page.NativePageAssassin;
 import org.chromium.chrome.browser.native_page.NativePageFactory;
 import org.chromium.chrome.browser.night_mode.NightModeUtils;
@@ -934,6 +935,12 @@ class TabImpl implements Tab {
     @Override
     public LoadUrlResult loadUrl(LoadUrlParams params) {
         try (TraceEvent e = TraceEvent.scoped("Tab.loadUrl")) {
+            boolean shouldIntercept = isTabInBrowser() && !isDormant();
+            if (shouldIntercept
+                    && HistoryManagerUtils.maybeInterceptLoadUrl(this, params.getUrl())) {
+                return new LoadUrlResult(
+                        TabLoadStatus.PAGE_LOAD_FAILED, /* navigationHandle= */ null);
+            }
             if (maybeHandleBeforeUnload(() -> loadUrl(params))) {
                 return new LoadUrlResult(
                         TabLoadStatus.DEFAULT_PAGE_LOAD, /* navigationHandle= */ null);
@@ -1770,6 +1777,9 @@ class TabImpl implements Tab {
         mUrl = new GURL(state.contentsState.getVirtualUrlFromState());
         setTitle(assumeNonNull(state.contentsState.getDisplayTitleFromState()));
         mTabLaunchTypeAtCreation = state.tabLaunchTypeAtCreation;
+        if (mParentId == INVALID_TAB_ID) {
+            mParentId = state.parentId;
+        }
         setRootId(state.rootId == Tab.INVALID_TAB_ID ? mId : state.rootId);
         setTabGroupId(state.tabGroupId);
         setUserAgent(state.userAgent);
@@ -2787,6 +2797,7 @@ class TabImpl implements Tab {
         return mDelegateFactory != null && mDelegateFactory.isTabInPwa();
     }
 
+    @CalledByNative
     @Override
     public boolean isTabInBrowser() {
         return mDelegateFactory != null && mDelegateFactory.isTabInBrowser();

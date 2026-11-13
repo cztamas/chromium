@@ -373,7 +373,7 @@ void CanvasNon2DResourceProvider::OnFlushForImage(
 }
 
 void CanvasNon2DResourceProvider::OnResourceRefReturned(
-    scoped_refptr<CanvasResourceSharedImage>&& resource) {
+    scoped_refptr<CanvasResourceSharedImage> resource) {
   if (!resource->IsLost() && resource->HasOneRef() && image_pool_) {
     image_pool_->ReleaseImage(std::move(resource));
   }
@@ -514,10 +514,27 @@ void CanvasNon2DResourceProvider::EnsureResourceReadyForDraw() {
 scoped_refptr<ExportedCanvasResource>
 CanvasNon2DResourceProvider::CreateExportedResource(
     scoped_refptr<CanvasResourceSharedImage> resource) {
+  auto wait_sync_token = base::BindRepeating(
+      [](scoped_refptr<CanvasResourceSharedImage> resource,
+         gpu::SyncToken sync_token) { resource->WaitSyncToken(sync_token); },
+      resource);
+
+  auto release_callback = base::BindOnce(
+      [](scoped_refptr<CanvasResourceSharedImage> resource,
+         const gpu::SyncToken& sync_token, bool is_lost) {
+        if (is_lost) {
+          resource->NotifyResourceLost();
+        }
+        CanvasResource::DropRefOnOwningThread(std::move(resource));
+      },
+      resource);
+
   return base::MakeRefCounted<ExportedCanvasResource>(
-      resource, resource->GetSharedImage(), resource->sync_token(),
+      resource->GetSharedImage(), resource->sync_token(),
       viz::TransferableResource::ResourceSource::kCanvas, hdr_metadata_,
-      context_provider_wrapper_, !IsSoftware());
+      context_provider_wrapper_, !IsSoftware(), std::move(wait_sync_token),
+      std::move(release_callback),
+      /*use_legacy_external_canvas_resource_bitmap_path=*/false);
 }
 
 scoped_refptr<ExportedCanvasResource>
@@ -584,7 +601,7 @@ scoped_refptr<StaticBitmapImage> CanvasNon2DResourceProvider::Snapshot() {
     // the ref-count on the resource as a proxy for a read lock to allow
     // recycling the resource once all refs have been released.
     auto release_callback = base::BindOnce(
-        [](scoped_refptr<CanvasResourceSharedImage>&& resource,
+        [](scoped_refptr<CanvasResourceSharedImage> resource,
            const gpu::SyncToken& sync_token, bool lost_resource) {
           CHECK(resource);
           CHECK(!lost_resource);

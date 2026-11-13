@@ -1894,10 +1894,10 @@ Your Google account may have other forms of browsing history like searches and a
         Gemini
       </message>
       <message name="IDS_HISTORY_TIME_PERIOD_FILTER_CHIP_TEXT" desc="Text used in the time period filter chip when no option is selected. Selecting an option restricts the history results to entries visited within that time period, e.g. 'Yesterday' or 'Last week'.">
-        Time period
+        Date
       </message>
       <message name="IDS_HISTORY_FILTER_BY_TIME_PERIOD" desc="Text used in the header of the time period filter sheet, which lists time periods such as 'Yesterday' or 'Last week' to restrict the history results to.">
-        Filter by time period
+        Filter by date
       </message>
       <message name="IDS_HISTORY_RESET_FILTERS" desc="Text used in the button to reset all applied history filters.">
         Clear all
@@ -5223,6 +5223,12 @@ To change this setting, <ph name="BEGIN_LINK">BEGIN_LINK</ph>delete the Chrome d
       </message>
       <message name="IDS_PDF_DOWNLOAD" desc="Menu option to download the PDF document.">
         Download
+      </message>
+      <message name="IDS_PDF_DOWNLOAD_ORIGINAL" desc="The label for the menu option to download the original, unedited PDF document (without user's changes).">
+        Without your changes
+      </message>
+      <message name="IDS_PDF_DOWNLOAD_EDITED" desc="The label for the menu option to download the edited PDF document (with user's changes).">
+        With your changes
       </message>
       <message name="IDS_PDF_FIT_PAGE" desc="Menu option to fit the PDF page to the screen.">
         Fit to page

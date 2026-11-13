@@ -43,6 +43,7 @@
 #include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
+#include "chrome/browser/ui/views/frame/browser_widget.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_base.h"
 #include "chrome/browser/ui/views/tabs/dragging/drag_session_data.h"
 #include "chrome/browser/ui/views/tabs/dragging/tab_drag_context.h"
@@ -294,6 +295,16 @@ TabDragPointResolver* GetTabDragPointResolver() {
     g_tab_drag_point_resolver_ = &resolver;
   }
   return g_tab_drag_point_resolver_;
+}
+
+// Returns the restored invisible frame insets of the browser window that hosts
+// `widget`. See BrowserWidget::GetInvisibleFrameInsets().
+gfx::Insets GetRestoredInvisibleFrameInsets(views::Widget* widget) {
+  BrowserView* const browser_view = BrowserView::GetBrowserViewForNativeWindow(
+      widget->GetTopLevelWidget()->GetNativeWindow());
+  return browser_view ? browser_view->browser_widget()->GetInvisibleFrameInsets(
+                            /*restored=*/true)
+                      : gfx::Insets();
 }
 
 }  // namespace
@@ -1758,23 +1769,22 @@ TabDragController::Detach(ReleaseCapture release_capture) {
           attached_model->DetachTabsAndCollectionsForInsertion(dragged_indices);
 
   if (detaching_ephemeral_group_header) {
-    // DetachTabsAndCollectionsForInsertion() dissolves ephemeral focused groups
+    // DetachTabsAndCollectionsForInsertion() removes ephemeral focused groups
     // into ungrouped tabs so they are not promoted to a permanent group in the
     // target window. Update `drag_data_` to reflect that the group header no
     // longer exists and the remaining drag is a normal multi-tab drag.
-    const tab_groups::TabGroupId dissolved_group =
-        *drag_data_.group_header_id();
+    const tab_groups::TabGroupId removed_group = *drag_data_.group_header_id();
     std::erase_if(drag_data_.tab_drag_data_, [&](const TabDragData& datum) {
       return datum.is_group_header && datum.tab_group_data.has_value() &&
-             datum.tab_group_data->group_id == dissolved_group;
+             datum.tab_group_data->group_id == removed_group;
     });
     for (TabDragData& datum : drag_data_.tab_drag_data_) {
       if (datum.tab_group_data.has_value() &&
-          datum.tab_group_data->group_id == dissolved_group) {
+          datum.tab_group_data->group_id == removed_group) {
         datum.tab_group_data.reset();
       }
     }
-    drag_data_.dragging_groups.erase(dissolved_group);
+    drag_data_.dragging_groups.erase(removed_group);
     drag_data_.group_header_drag_data_.reset();
     drag_data_.source_view_index_ = 0;
   }
@@ -2816,7 +2826,14 @@ void TabDragController::RestoreAttachedWindowForDrag() {
 
 gfx::Size TabDragController::CalculateDraggedWindowSize(
     TabDragContext* source) {
+  // `initial_window_size_` is a widget size. Do the calculations below with
+  // the window size, which excludes the invisible frame insets (e.g.
+  // client-drawn shadows on Linux X11), and convert the result back.
+  const gfx::Insets invisible_frame_insets =
+      GetRestoredInvisibleFrameInsets(source->GetWidget());
   gfx::Size new_size(initial_window_size_);
+  new_size.Enlarge(-invisible_frame_insets.width(),
+                   -invisible_frame_insets.height());
 
   // Limit the window size to the current display's size, less some insets.
   const gfx::Size work_area =
@@ -2864,6 +2881,8 @@ gfx::Size TabDragController::CalculateDraggedWindowSize(
         std::max(maximized_size.height() / 2, new_size.height()));
   }
 
+  new_size.Enlarge(invisible_frame_insets.width(),
+                   invisible_frame_insets.height());
   return new_size;
 }
 
@@ -2954,7 +2973,7 @@ std::optional<webapps::AppId> TabDragController::GetControllingAppForDrag(
 
 BrowserWindowInterface* TabDragController::CreateBrowserForDrag(
     TabDragContext* source,
-    gfx::Size initial_size) {
+    gfx::Size initial_widget_size) {
   source->GetWidget()
       ->GetCompositor()
       ->RequestSuccessfulPresentationTimeForNextFrame(base::BindOnce(
@@ -2973,6 +2992,14 @@ BrowserWindowInterface* TabDragController::CreateBrowserForDrag(
           GetAttachedBrowserWidget()->GetNativeWindow())
           ->browser();
 
+  // BrowserWindowCreateParams take window bounds, which exclude the invisible
+  // frame insets that the widget size includes.
+  const gfx::Insets invisible_frame_insets =
+      GetRestoredInvisibleFrameInsets(source->GetWidget());
+  gfx::Size initial_window_size = initial_widget_size;
+  initial_window_size.Enlarge(-invisible_frame_insets.width(),
+                              -invisible_frame_insets.height());
+
   const std::optional<webapps::AppId> controlling_app =
       GetControllingAppForDrag(from_browser);
   const bool open_as_web_app = controlling_app.has_value();
@@ -2990,7 +3017,7 @@ BrowserWindowInterface* TabDragController::CreateBrowserForDrag(
   // Web app windows have their own initial size independent of the source
   // browser window.
   if (!open_as_web_app) {
-    create_params.initial_bounds = gfx::Rect(initial_size);
+    create_params.initial_bounds = gfx::Rect(initial_window_size);
   }
   create_params.from_user_gesture = true;
   create_params.in_tab_dragging = true;
@@ -3034,7 +3061,7 @@ BrowserWindowInterface* TabDragController::CreateBrowserForDrag(
   // We need to reset them again so they are honored. On ChromeOS, this is
   // handled in NativeWidgetAura.
   if (!open_as_web_app) {
-    browser->GetWindow()->SetBounds(gfx::Rect(initial_size));
+    browser->GetWindow()->SetBounds(gfx::Rect(initial_window_size));
   }
 #endif
 

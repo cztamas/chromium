@@ -652,6 +652,52 @@ IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
   test_helper()->CheckSafetyTipUkmCount(0);
 }
 
+// Redirecting from a metrics-only lookalike (edit distance) to an
+// interstitial-class lookalike (target embedding) should still show the
+// interstitial for the final URL. Regression test for crbug.com/573697949.
+IN_PROC_BROWSER_TEST_F(
+    LookalikeUrlNavigationThrottleBrowserTest,
+    TargetEmbedding_TopDomain_RedirectFromMetricsOnlyLookalike) {
+  const GURL kNavigatedUrl =
+      GetLongRedirect("goooglé.com", "site.test", "youtube.com-test.com");
+  const GURL kLastUrl = GetURL("youtube.com-test.com");
+  const GURL kExpectedSuggestedUrl = GetURLWithoutPath("youtube.com");
+  SetEngagementScore(browser(), kNavigatedUrl, kLowEngagement);
+  SetEngagementScore(browser(), kLastUrl, kLowEngagement);
+  base::HistogramTester histograms;
+
+  TestMetricsRecordedAndInterstitialShown(
+      browser(), histograms, kNavigatedUrl, kExpectedSuggestedUrl,
+      NavigationSuggestionEvent::kMatchTargetEmbedding);
+  CheckInterstitialUkm({kLastUrl}, "MatchType",
+                       LookalikeUrlMatchType::kTargetEmbedding);
+  CheckInterstitialUkm({kLastUrl}, "TriggeredByInitialUrl", false);
+  test_helper()->CheckSafetyTipUkmCount(0);
+}
+
+// Redirecting from a safety-tip lookalike (top 5k skeleton match) to an
+// interstitial-class lookalike (target embedding) should still show the
+// interstitial for the final URL. Regression test for crbug.com/573697949.
+IN_PROC_BROWSER_TEST_F(
+    LookalikeUrlNavigationThrottleBrowserTest,
+    TargetEmbedding_TopDomain_RedirectFromSafetyTipLookalike) {
+  const GURL kNavigatedUrl =
+      GetLongRedirect("googlé.sk", "site.test", "youtube.com-test.com");
+  const GURL kLastUrl = GetURL("youtube.com-test.com");
+  const GURL kExpectedSuggestedUrl = GetURLWithoutPath("youtube.com");
+  SetEngagementScore(browser(), kNavigatedUrl, kLowEngagement);
+  SetEngagementScore(browser(), kLastUrl, kLowEngagement);
+  base::HistogramTester histograms;
+
+  TestMetricsRecordedAndInterstitialShown(
+      browser(), histograms, kNavigatedUrl, kExpectedSuggestedUrl,
+      NavigationSuggestionEvent::kMatchTargetEmbedding);
+  CheckInterstitialUkm({kLastUrl}, "MatchType",
+                       LookalikeUrlMatchType::kTargetEmbedding);
+  CheckInterstitialUkm({kLastUrl}, "TriggeredByInitialUrl", false);
+  test_helper()->CheckSafetyTipUkmCount(0);
+}
+
 // Target embedding should not trigger on allowlisted embedder domains.
 IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
                        TargetEmbedding_EmbedderAllowlist) {
@@ -716,6 +762,25 @@ IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
   // recorded.
   test_helper()->CheckInterstitialUkmCount(0);
   test_helper()->CheckSafetyTipUkmCount(1);
+}
+
+// Regression test for crbug.com/581401481: A non-top-bucket IDN skeleton match
+// (Safety Tip) on the eTLD+1 must not shadow a target-embedding match
+// (interstitial) on the full hostname.
+IN_PROC_BROWSER_TEST_F(LookalikeUrlNavigationThrottleBrowserTest,
+                       Idn_TopDomain_Not500_TargetEmbedding_Interstitial) {
+  const GURL kNavigatedUrl = GetURL("youtube.com.googlé.sk");
+  const GURL kExpectedSuggestedUrl = GetURLWithoutPath("youtube.com");
+  SetEngagementScore(browser(), kNavigatedUrl, kLowEngagement);
+
+  base::HistogramTester histograms;
+  TestMetricsRecordedAndInterstitialShown(
+      browser(), histograms, kNavigatedUrl, kExpectedSuggestedUrl,
+      NavigationSuggestionEvent::kMatchTargetEmbedding);
+
+  CheckInterstitialUkm({kNavigatedUrl}, "MatchType",
+                       LookalikeUrlMatchType::kTargetEmbedding);
+  test_helper()->CheckSafetyTipUkmCount(0);
 }
 
 // Same as Idn_TopDomain_Match, but this time the domain contains characters

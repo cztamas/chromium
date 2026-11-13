@@ -251,6 +251,12 @@ class OmniboxEditModel {
   // no user input in progress).
   void Revert();
 
+  // Reverts the edit model if the user hasn't edited the text: when the text
+  // isn't the permanent text and no input is in progress (e.g. an unelided
+  // URL), or when the edited text equals the permanent text or the full URL.
+  // Never exits keyword mode.
+  void RevertUneditedText();
+
   // Directs the popup to start autocomplete. Makes use of the `view_`
   // selection, so make sure to set that before calling `StartAutocomplete()`.
   void StartAutocomplete(bool prevent_inline_autocomplete);
@@ -283,6 +289,10 @@ class OmniboxEditModel {
   // will occur. It also affects metrics.
   // Virtual for testing.
   virtual void OpenAiMode(AimActivation activation);
+
+  // Whether to open the compose box in AI Mode (e.g. from the AI Mode button).
+  // Set on every open; read once when the compose box is shown.
+  bool enter_aim_mode() const { return enter_aim_mode_; }
 
   // Opens the composebox for the AskG flow by setting the popup state.
   virtual void OpenComposeboxForAskG();
@@ -761,8 +771,8 @@ class OmniboxEditModel {
 
   // If focus_state_ does not match |state|, we update it and notify the
   // InstantController about the change (passing along the |reason| for the
-  // change). If the caret visibility changes, we call ApplyCaretVisibility() on
-  // the view.
+  // change). If the focus state or caret visibility changes, we call
+  // OnFocusChanged() or ApplyCaretVisibility() on the view.
   void SetFocusState(OmniboxFocusState state, OmniboxFocusChangeReason reason);
 
   // This is an event handler that notifies the popup view of match icon
@@ -932,6 +942,9 @@ class OmniboxEditModel {
   // This is needed to properly update the SearchModel state when the user
   // presses escape.
   bool in_revert_ = false;
+
+  // See `enter_aim_mode()`.
+  bool enter_aim_mode_ = false;
 
   // Indicates if the upcoming autocomplete search is allowed to be treated as
   // an exact keyword match.  If this is true then keyword mode will be

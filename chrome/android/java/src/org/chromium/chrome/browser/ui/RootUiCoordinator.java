@@ -1383,7 +1383,12 @@ public class RootUiCoordinator
         assumeNonNull(mAdaptiveToolbarUiCoordinator);
         mAdaptiveToolbarUiCoordinator.onFinishNativeInitialization();
 
-        EdgeToEdgeUtils.recordEligibilityForEveryStart(mActivity);
+        EdgeToEdgeUtils.recordBottomEligibilityForEveryStart(mActivity);
+        if (supportsTopInset()) {
+            boolean topEligible = EdgeToEdgeUtils.recordTopEligibilityForEveryStart(mActivity);
+            UmaSessionStats.registerSyntheticFieldTrial(
+                    "EdgeToEdgeTopEligibility", topEligible ? "Eligible" : "Not Eligible");
+        }
 
         if (mWindowAndroid.getInsetObserver() != null
                 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
@@ -1505,7 +1510,7 @@ public class RootUiCoordinator
                         assertNonNull(getBottomSheetController()),
                         mActivityTabProvider,
                         mBrowserControlsManager,
-                        mToolbarThemeColorProvider);
+                        mTopUiThemeColorProvider);
         if (mReaderModeTabObserver != null) {
             mReaderModeTabObserver.destroy();
             mReaderModeTabObserver = null;
@@ -2717,10 +2722,22 @@ public class RootUiCoordinator
             mEdgeToEdgeControllerCreator = null;
         }
 
-        boolean eligible = EdgeToEdgeUtils.recordEligibilityOnCreate(mActivity);
+        // Skip bottom-chin OnCreateController metrics when EdgeToEdgeController is initialized
+        // solely for top edge-to-edge (e.g. on 3-button navigation phones), where the bottom chin
+        // is not supported. Otherwise, enabling sEdgeToEdgeTopInset would record NAVIGATION_MODE
+        // ineligibility into bottom-chin OnCreateController histograms and
+        // EdgeToEdgeChinEligibility only in the Enabled arm.
+        boolean initializedSolelyForTop =
+                supportsTopInset()
+                        && EdgeToEdgeUtils.isEdgelessTopInsetSupported(mActivity)
+                        && !EdgeToEdgeUtils.isEdgeToEdgeBottomChinSupportedByDevice(mActivity);
+        boolean eligible = false;
+        if (!initializedSolelyForTop) {
+            eligible = EdgeToEdgeUtils.recordEligibilityOnCreateForBottomChin(mActivity);
 
-        UmaSessionStats.registerSyntheticFieldTrial(
-                "EdgeToEdgeChinEligibility", eligible ? "Eligible" : "Not Eligible");
+            UmaSessionStats.registerSyntheticFieldTrial(
+                    "EdgeToEdgeChinEligibility", eligible ? "Eligible" : "Not Eligible");
+        }
 
         if (supportsEdgeToEdge()) {
             assert eligible || EdgeToEdgeUtils.isEdgelessTopInsetSupported(mActivity)
@@ -3158,5 +3175,10 @@ public class RootUiCoordinator
 
     public void setScrimManagerForTesting(ScrimManager scrimManager) {
         mScrimManagerSupplier.set(scrimManager);
+    }
+
+    public @Nullable ReaderModeBottomSheetManager initReaderModeBottomSheetManagerForTesting() {
+        initReaderModeBottomSheetManager();
+        return mReaderModeBottomSheetManager;
     }
 }

@@ -10115,8 +10115,9 @@ void RenderFrameHostImpl::FocusedElementChanged(
 
 void RenderFrameHostImpl::TextSelectionChanged(const std::u16string& text,
                                                uint32_t offset,
-                                               const gfx::Range& range) {
-  has_selection_ = !text.empty();
+                                               const gfx::Range& range,
+                                               bool has_selection) {
+  has_selection_ = has_selection;
   GetRenderWidgetHost()->SelectionChanged(text, offset, range);
 
   // The `text` parameter contains the surrounding text of the selection, and
@@ -14848,7 +14849,7 @@ bool RenderFrameHostImpl::CreateNetworkServiceDefaultFactoryAndObserve(
     network::mojom::URLLoaderFactoryParamsPtr monitoring_factory_params =
         network::mojom::URLLoaderFactoryParams::New();
     monitoring_factory_params->network_restrictions_id =
-        GetNetworkRestrictionsID();
+        network::GetNoOpNetworkRestrictionsId();
     monitoring_factory_params->process_id =
         ToOriginatingProcessId(GetProcess()->GetID());
     monitoring_factory_params->debug_tag = "RFHI - monitoring_factory_params";
@@ -15540,6 +15541,14 @@ void RenderFrameHostImpl::CreateDedicatedWorkerHostFactory(
     bad_message::ReceivedBadMessage(
         GetProcess(),
         bad_message::RFH_DEDICATED_WORKER_HOST_FACTORY_PDF_PROCESS_BLOCKED);
+    return;
+  }
+
+  // Existing dedicated workers are paused when entering the back/forward
+  // cache. Disallow creating new workers while inactive so an unpaused worker
+  // cannot be initialized for a cached or pending-deletion document.
+  if (IsInactiveAndDisallowActivation(
+          DisallowActivationReasonId::kCreateDedicatedWorker)) {
     return;
   }
 

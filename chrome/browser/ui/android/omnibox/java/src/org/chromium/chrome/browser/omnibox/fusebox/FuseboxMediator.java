@@ -1174,7 +1174,7 @@ class FuseboxMediator implements BackPressHandler {
                 .setType(PopupButtonType.TOOL)
                 .setOnClicked(this::onDynamicButtonClicked)
                 .setText(mContext.getString(R.string.ai_mode_entrypoint_label))
-                .setSubtext(getToolSubtext(ToolMode.TOOL_MODE_UNSPECIFIED))
+                .setSubtext(getToolSubtext(ToolMode.TOOL_MODE_UNSPECIFIED, /* menuTooltip= */ null))
                 .setIconId(IconResourceIds.SEARCH_LOUPE_WITH_SPARKLE)
                 .setEnabled(true)
                 .setSelected(selected)
@@ -1182,10 +1182,18 @@ class FuseboxMediator implements BackPressHandler {
                 .build();
     }
 
+    /**
+     * Returns the subtext to display for {@code toolMode}, preferring {@code menuTooltip} for
+     * eligible tools and falling back to client-defined strings.
+     */
     @VisibleForTesting
-    String getToolSubtext(@ToolMode int toolMode) {
+    String getToolSubtext(@ToolMode int toolMode, @Nullable String menuTooltip) {
         if (!OmniboxFeatures.hasAccordion()) {
             return "";
+        }
+
+        if (canUseMenuTooltipAsSubtext(toolMode) && !TextUtils.isEmpty(menuTooltip)) {
+            return menuTooltip;
         }
 
         @StringRes
@@ -1198,6 +1206,24 @@ class FuseboxMediator implements BackPressHandler {
                     default -> Resources.ID_NULL;
                 };
         return resId != Resources.ID_NULL ? mResourceProvider.getString(resId) : "";
+    }
+
+    /** Returns whether the server menu tooltip of {@code toolMode} can be shown as its subtext. */
+    private static boolean canUseMenuTooltipAsSubtext(@ToolMode int toolMode) {
+        return switch (toolMode) {
+            // The menu tooltips of these tools hold longer desktop hover descriptions rather than
+            // short mobile subtexts. Keep their client strings until ToolConfig adds a dedicated
+            // subtext field.
+            case ToolMode.TOOL_MODE_UNSPECIFIED,
+                    ToolMode.TOOL_MODE_DEEP_SEARCH,
+                    ToolMode.TOOL_MODE_CANVAS,
+                    ToolMode.TOOL_MODE_IMAGE_GEN,
+                    ToolMode.TOOL_MODE_IMAGE_GEN_UPLOAD ->
+                    false;
+            // Other tools, including future launches, use the server menu tooltip by default so
+            // their subtexts can be configured without client changes.
+            default -> true;
+        };
     }
 
     private void launchCamera() {
@@ -1629,7 +1655,7 @@ class FuseboxMediator implements BackPressHandler {
                                 .setType(PopupButtonType.TOOL)
                                 .setOnClicked(this::onDynamicButtonClicked)
                                 .setText(label)
-                                .setSubtext(getToolSubtext(toolMode))
+                                .setSubtext(getToolSubtext(toolMode, tooltip))
                                 .setIconId(iconId)
                                 .setEnabled(enabled)
                                 .setSelected(selected)
@@ -1665,16 +1691,18 @@ class FuseboxMediator implements BackPressHandler {
 
         List<PopupButtonData> modelButtonDataList = new ArrayList<>();
         if (inputState != null) {
-            boolean showActiveModel = isAimRequest && isModelSelectionAllowed(inputState);
+            // inputState.activeModel stays set so the user's model resumes after leaving the tool.
+            // Hide the selection checkmark while an incompatible tool is active.
+            boolean modelSelectionAllowed = isModelSelectionAllowed(inputState);
+            boolean showActiveModel = isAimRequest && modelSelectionAllowed;
             for (ModelConfig modelConfig : inputState.getModelConfigs()) {
                 int modelMode = modelConfig.getModelValue();
                 if (inputState.isModelVisible(modelMode)) {
-                    // TODO(crbug.com/584861500): Remove this workaround once InputState exposes the
-                    // effective model instead of the default model. This check is a hack because
-                    // inputState.activeModel cannot be trusted when the active tool is incompatible
-                    // with selectable models, as it still reports the default model rather than the
-                    // effective model that would be used.
                     boolean selected = showActiveModel && inputState.activeModel == modelMode;
+                    // TODO(crbug.com/584861500): Rely on inputState.isModelEnabled() alone once
+                    // InputStateModel populates disabledModels for disable_active_model_selection
+                    // and isModelEnabled() respects it.
+                    boolean enabled = modelSelectionAllowed && inputState.isModelEnabled(modelMode);
                     String tooltip = modelConfig.getMenuTooltip();
                     int iconId =
                             modelConfig.hasIcon() && modelConfig.getIcon().hasIconId()
@@ -1686,7 +1714,7 @@ class FuseboxMediator implements BackPressHandler {
                                     .setOnClicked(this::onDynamicButtonClicked)
                                     .setText(modelConfig.getMenuLabel())
                                     .setIconId(iconId)
-                                    .setEnabled(inputState.isModelEnabled(modelMode))
+                                    .setEnabled(enabled)
                                     .setSelected(selected)
                                     .setProtoId(modelMode)
                                     .setTooltip(tooltip)
@@ -1829,7 +1857,7 @@ class FuseboxMediator implements BackPressHandler {
 
     /**
      * Returns whether selecting a model is allowed while the active tool is selected. Returns true
-     * unless the active tool specifies that it is incompatible with selectable models.
+     * unless the active tool specifies that it is not compatible with selectable models.
      */
     private static boolean isModelSelectionAllowed(InputState inputState) {
         ToolConfig toolConfig = getActiveToolConfig(inputState);

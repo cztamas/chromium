@@ -1362,7 +1362,6 @@ source_set("extensions") {
       # TODO(crbug.com/40230380): Find an appropriate spot for vpn_provider.
       "//chrome/browser/chromeos/extensions/vpn_provider",
       "//chrome/browser/chromeos/extensions/wm",
-      "//chrome/browser/chromeos/platform_keys",
       "//chrome/browser/chromeos/policy/dlp",
       "//chrome/browser/devtools",
       "//chrome/browser/nearby_sharing/common",
@@ -2147,6 +2146,10 @@ source_set("unit_tests") {
     deps += [ "//components/search" ]
   }
 
+  if (!is_android) {
+    deps += [ "//chrome/browser/ui/webui/top_chrome" ]
+  }
+
   if (!is_chromeos) {
     sources += [ "preinstalled_extensions_unittest.cc" ]
   }
@@ -2271,6 +2274,7 @@ source_set("unit_tests") {
       "//chrome/browser/ash/extensions",
       "//chrome/browser/ash/login/quick_unlock",
       "//chrome/browser/ash/login/smart_lock",
+      "//chrome/browser/ash/login/test:user_session_test_environment_delegate",
       "//chrome/browser/ash/login/users",
       "//chrome/browser/ash/printing",
       "//chrome/browser/ash/scanning",
@@ -2281,6 +2285,7 @@ source_set("unit_tests") {
       "//chrome/browser/prefs:util",
       "//chrome/browser/printing",
       "//chrome/test:test_support_unit",
+      "//chromeos/ash/components/browser_context_helper",
       "//chromeos/ash/components/disks:test_support",
       "//chromeos/ash/components/file_manager:constants",
       "//chromeos/ash/components/network:test_support",
@@ -2659,6 +2664,7 @@ source_set("browser_tests") {
     "//extensions/strings",
     "//services/network/public/cpp:ip_address_space_overrides_test_utils",
     "//ui/base:ozone_buildflags",
+    "//ui/base:test_support",
     "//ui/base/idle",
     "//ui/base/idle:test_support",
     "//ui/menus",
@@ -2841,7 +2847,6 @@ source_set("browser_tests") {
       "//chrome/browser/chromeos/extensions/telemetry/api:browser_tests",
       "//chrome/browser/chromeos/extensions/vpn_provider",
       "//chrome/browser/chromeos/extensions/wm",
-      "//chrome/browser/chromeos/platform_keys",
       "//chrome/browser/chromeos/policy/dlp/test:test_support",
       "//chrome/browser/error_reporting:test_support",
       "//chrome/browser/extensions/api/enterprise_platform_keys_private:browser_tests",

@@ -48,9 +48,8 @@ import type {Url} from 'chrome://resources/mojo/url/mojom/url.mojom-webui.js';
 
 import {getCss} from './app.css.js';
 import {getHtml} from './app.html.js';
-import type {ComposeboxPosition, InjectedInput} from './contextual_tasks.mojom-webui.js';
-import type {BrowserProxy} from './contextual_tasks_browser_proxy.js';
-import {BrowserProxyImpl} from './contextual_tasks_browser_proxy.js';
+import {browserProxyFactory} from './contextual_tasks.mojom-webui.js';
+import type {BrowserProxy, ComposeboxPosition, InjectedInput} from './contextual_tasks.mojom-webui.js';
 import type {ToolbarBrowserProxy} from './contextual_tasks_toolbar_browser_proxy.js';
 import {ToolbarBrowserProxyImpl} from './contextual_tasks_toolbar_browser_proxy.js';
 import {PostMessageHandler} from './post_message_handler.js';
@@ -318,7 +317,7 @@ export class ContextualTasksAppElement extends ContextualTasksAppElementBase {
       loadTimeData.getString('friendlyZeroStateTitleBeforeName');
   protected accessor friendlyZeroStateTitleAfterName_: string =
       loadTimeData.getString('friendlyZeroStateTitleAfterName');
-  private browserProxy_: BrowserProxy = BrowserProxyImpl.getInstance();
+  private browserProxy_: BrowserProxy = browserProxyFactory.getInstance();
   private toolbarBrowserProxy_: ToolbarBrowserProxy =
       ToolbarBrowserProxyImpl.getInstance();
   private toolbarListenerIds_: number[] = [];
@@ -578,9 +577,10 @@ export class ContextualTasksAppElement extends ContextualTasksAppElementBase {
         // If we just changed to zero state, that means
         // it is a new thread or new AIM page. Otherwise,
         // we are not in zero state anymore, or not in an AIM URL. In
-        // both thread/AIM cases for zero state, we clear input.
+        // both thread/AIM cases we clear input when entering zero state,
+        // but keep it (e.g. pre-staged image context) when already there.
         if (isZeroState) {
-          this.forceComposeboxFocus();
+          this.forceComposeboxFocus(/*clearInput=*/ !wasZeroState);
           // Reset the forced composebox bounds since the zero state position
           if (!this.shouldSetForceComposeboxBounds_()) {
             this.forcedComposeboxBounds_ = null;
@@ -701,7 +701,8 @@ export class ContextualTasksAppElement extends ContextualTasksAppElementBase {
         // and focus the composebox.
         if (this.isZeroState_ && this.isShownInTab_) {
           this.playZeroStateAnimations_();
-          this.forceComposeboxFocus();
+          this.forceComposeboxFocus(
+              /*clearInput=*/ this.isLoadingZeroStateFromResults_);
         }
       }
     });
@@ -779,10 +780,10 @@ export class ContextualTasksAppElement extends ContextualTasksAppElementBase {
     // it now!
     if (this.isZeroState_ && this.isDomContentLoaded_ && this.isShownInTab_) {
       this.playZeroStateAnimations_();
-      this.forceComposeboxFocus();
+      this.forceComposeboxFocus(/*clearInput=*/ false);
     } else if (this.isZeroState_ && !this.isShownInTab_) {
       this.playZeroStateAnimations_();
-      this.forceComposeboxFocus();
+      this.forceComposeboxFocus(/*clearInput=*/ false);
     }
 
     // The thread URL is considered pending (not loaded immediately in the
@@ -1410,8 +1411,12 @@ export class ContextualTasksAppElement extends ContextualTasksAppElementBase {
   }
 
   // Helper to focus the composebox, even if it is transitioning from hidden.
-  private forceComposeboxFocus() {
-    this.composebox_?.clearInputAndFocus();
+  private forceComposeboxFocus(clearInput: boolean = true) {
+    if (clearInput) {
+      this.composebox_?.clearInputAndFocus();
+    } else {
+      this.composebox_?.focus();
+    }
     this.updateComplete.then(() => {
       this.composebox_?.tryFocus();
     });

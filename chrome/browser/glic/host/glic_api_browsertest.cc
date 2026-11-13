@@ -86,6 +86,7 @@
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/webui_url_constants.h"
+#include "chrome/test/base/browser_created_waiter.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/enterprise/buildflags/buildflags.h"
 #include "components/favicon/content/content_favicon_driver.h"
@@ -3662,14 +3663,7 @@ IN_PROC_BROWSER_TEST_P(GlicApiTestUserStatusCheckTest,
   EXPECT_LE(user_status_fetch_count_, 4u);
 }
 
-// TODO(crbug.com/565863579): Flaky timeout on Android waiting for
-// GlicHostRegistry in ExecuteJsTest.
-#if BUILDFLAG(IS_ANDROID)
-#define MAYBE_testInitializeFails DISABLED_testInitializeFails
-#else
-#define MAYBE_testInitializeFails testInitializeFails
-#endif
-IN_PROC_BROWSER_TEST_P(GlicApiTest, MAYBE_testInitializeFails) {
+IN_PROC_BROWSER_TEST_P(GlicApiTest, testInitializeFails) {
   service()->enabling().SetCompletedFre(prefs::FreStatus::kNotStarted);
   glic::GlicHistogramTester histogram_tester;
   ASSERT_OK(OpenGlicForActiveTab());
@@ -4053,7 +4047,11 @@ IN_PROC_BROWSER_TEST_P(GlicApiTest, testPopupOpens) {
   content::TestNavigationObserver observer(GURL("https://www.chromium.org"));
   observer.WatchExistingWebContents();
   observer.StartWatchingNewWebContents();
+  BrowserCreatedWaiter popup_waiter;
   ExecuteJsTest();
+  BrowserWindowInterface* popup = popup_waiter.Wait();
+  ASSERT_TRUE(popup);
+  EXPECT_EQ(popup->GetType(), BrowserWindowInterface::TYPE_POPUP);
   observer.Wait();
   EXPECT_EQ(GetPopupCount(), 1);
 }
@@ -4799,14 +4797,7 @@ IN_PROC_BROWSER_TEST_P(GlicApiTestWebAuthnInWarmedGuest,
 }
 #endif  // !BUILDFLAG(IS_ANDROID)
 
-// TODO(crbug.com/449764057): Flakes/fails on all platforms except windows.
-#if BUILDFLAG(IS_WIN)
-#define MAYBE_testGetPageMetadataOnNavigation testGetPageMetadataOnNavigation
-#else
-#define MAYBE_testGetPageMetadataOnNavigation \
-  DISABLED_testGetPageMetadataOnNavigation
-#endif
-IN_PROC_BROWSER_TEST_P(GlicApiTest, MAYBE_testGetPageMetadataOnNavigation) {
+IN_PROC_BROWSER_TEST_P(GlicApiTest, testGetPageMetadataOnNavigation) {
   ASSERT_TRUE(content::NavigateToURL(
       GetTabListInterface()->GetActiveTab()->GetContents(),
       embedded_test_server()->GetURL("/glic/browser_tests/test.html")));

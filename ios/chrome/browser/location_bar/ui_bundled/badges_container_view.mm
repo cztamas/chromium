@@ -317,11 +317,14 @@ const CGFloat kSeparatorVerticalPadding = 12.0;
     _placeholderView.translatesAutoresizingMaskIntoConstraints = NO;
     SetViewHiddenIfNecessary(_placeholderView, YES);
     [_placeholderViewWrapper addSubview:_placeholderView];
+    // Avoid conflicting with `_placeholderView`'s minimum width when hidden.
+    NSLayoutConstraint* trailingConstraint = [_placeholderView.trailingAnchor
+        constraintEqualToAnchor:_placeholderViewWrapper.trailingAnchor];
+    trailingConstraint.priority = UILayoutPriorityDefaultHigh;
     [NSLayoutConstraint activateConstraints:@[
       [_placeholderView.leadingAnchor
           constraintEqualToAnchor:_placeholderViewWrapper.leadingAnchor],
-      [_placeholderView.trailingAnchor
-          constraintEqualToAnchor:_placeholderViewWrapper.trailingAnchor],
+      trailingConstraint,
       [_placeholderView.centerYAnchor
           constraintEqualToAnchor:_placeholderViewWrapper.centerYAnchor],
     ]];
@@ -488,7 +491,7 @@ const CGFloat kSeparatorVerticalPadding = 12.0;
       l10n_util::GetNSString(IDS_IOS_ACCNAME_OPEN_PAGE_ACTION_MENU);
   _tapOverlayButton.accessibilityTraits = UIAccessibilityTraitButton;
 
-  // TODO(crbug.com/448422022): Remove overlay when migrating to
+  // TODO(crbug.com/569998074): Remove overlay when migrating to
   // LocationBarBadgeViewController.
   [self addSubview:_tapOverlayButton];
   AddSameConstraints(_containerStackView, _tapOverlayButton);

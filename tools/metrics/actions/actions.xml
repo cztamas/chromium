@@ -768,6 +768,8 @@ should be able to be added at any place in this file.
   <variant name="_NewTabTip" summary="For NewTabTip feature."/>
   <variant name="_NotificationPermissionPromo"
       summary="For the OS notification permission prompt on Android."/>
+  <variant name="_NtpFuseboxAnimation"
+      summary="Gate for the NTP Fusebox search box animation."/>
   <variant name="_OmniboxAskGLensIcon"
       summary="In product help for the Lens icon in the omnibox popup."/>
   <variant name="_OmniboxEverywhereLensPromo"
@@ -1134,6 +1136,7 @@ should be able to be added at any place in this file.
   <variant name=".GenerativeThemes" summary="Generative Themes"/>
   <variant name=".GenerativeTheming" summary="Generative Theming"/>
   <variant name=".GlicWhatsNewLuminous" summary="Gemini in Chrome: Luminous"/>
+  <variant name=".GlicWhatsNewQuizzes" summary="Gemini in Chrome: Quizzes"/>
   <variant name=".GoogleLens" summary="Google Lens"/>
   <variant name=".Googlepayreauth" summary="Google Pay Re-auth"/>
   <variant name=".HeadlessLiveCaption" summary="Headless Live Caption"/>
@@ -9375,15 +9378,6 @@ should be able to be added at any place in this file.
   <owner>chrome-compose-frontend@google.com</owner>
   <description>
     Records when a Compose session is started from the proactive nudge. This is
-    emitted once when a session is created.
-  </description>
-</action>
-
-<action name="Compose.StartedSession.SelectionNudge">
-  <owner>perrier@chromium.org</owner>
-  <owner>chrome-compose-frontend@google.com</owner>
-  <description>
-    Records when a Compose session is started from the selection nudge. This is
     emitted once when a session is created.
   </description>
 </action>
@@ -18391,6 +18385,15 @@ should be able to be added at any place in this file.
   </description>
 </action>
 
+<action name="ManualFallback_CreditCard_SelectCvc">
+  <owner>tmartino@chromium.org</owner>
+  <owner>olivierrobin@chromium.org</owner>
+  <owner>bling-transactions@google.com</owner>
+  <description>
+    The user tapped on a credit card CVC in the Credit Card Fallback view.
+  </description>
+</action>
+
 <action name="ManualFallback_CreditCard_SelectExpirationMonth">
   <owner>tmartino@chromium.org</owner>
   <owner>olivierrobin@chromium.org</owner>
@@ -18704,6 +18707,16 @@ should be able to be added at any place in this file.
   <owner>siyua@chromium.org</owner>
   <description>
     The user tapped on a virtual card number in the Credit Card Fallback view.
+  </description>
+</action>
+
+<action name="ManualFallback_VirtualCard_SelectCvc">
+  <owner>chbannon@google.com</owner>
+  <owner>siyua@chromium.org</owner>
+  <owner>bling-transactions@google.com</owner>
+  <description>
+    The user tapped on the CVC of a virtual card in the Credit Card Fallback
+    view.
   </description>
 </action>
 
@@ -23447,6 +23460,20 @@ should be able to be added at any place in this file.
   <description>
     Reported when a web page is loaded with edge to edge drawing enabled for the
     page. Android only.
+  </description>
+</action>
+
+<action name="MobilePageLoadedWithTopToEdge" not_user_triggered="true">
+  <owner>aixba@chromium.org</owner>
+  <owner>dmurph@chromium.org</owner>
+  <owner>edge-to-edge@chromium.org</owner>
+  <description>
+    Reported when a page finishes loading in a non-Custom-Tab activity on a
+    supported phone configuration with the tab opted into top edge-to-edge (e.g.
+    viewport-fit=cover web page or customized-background NTP) while the top
+    edge-to-edge feature is enabled, mirroring MobilePageLoadedWithToEdge. Does
+    not account for transient UI suppressions such as fullscreen or status
+    indicator visibility. Android only.
   </description>
 </action>
 
@@ -34420,14 +34447,6 @@ should be able to be added at any place in this file.
   <owner>bling-pandamonium@google.com</owner>
   <description>
     Reported when user navigates to the Site Settings page. iOS only.
-  </description>
-</action>
-
-<action name="Settings.SuggestionsFromGemini">
-  <owner>alimariam@google.com</owner>
-  <owner>bling-transactions@google.com</owner>
-  <description>
-    Reported when user navigates to Suggestions from Gemini Settings. iOS only.
   </description>
 </action>
 

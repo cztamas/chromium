@@ -302,9 +302,10 @@ BASE_FEATURE(kGlicHotkeyLocalScope,
 #endif
 );
 
-// Enables printing Glic (both Floaty and Side Panel) via the print keyboard
-// shortcut (Ctrl+P / Cmd+P) when focused.
-BASE_FEATURE(kGlicKeyboardPrint, base::FEATURE_DISABLED_BY_DEFAULT);
+// Default-enabled platforms: desktop only (print shortcut not enabled on
+// Android). Enables printing Glic (both Floaty and Side Panel) via the print
+// keyboard shortcut (Ctrl+P / Cmd+P) when focused.
+BASE_FEATURE(kGlicKeyboardPrint, base::FEATURE_ENABLED_BY_DEFAULT);
 
 // Default-enabled platforms: all (paste eligibility guard for the Glic guest).
 BASE_FEATURE(kGlicPasteEligibilityCheck, base::FEATURE_ENABLED_BY_DEFAULT);
@@ -312,6 +313,10 @@ BASE_FEATURE(kGlicPasteEligibilityCheck, base::FEATURE_ENABLED_BY_DEFAULT);
 // Default-enabled platforms: all (web-source paste eligibility guard for the
 // Glic guest).
 BASE_FEATURE(kGlicWebPasteEligibilityCheck, base::FEATURE_ENABLED_BY_DEFAULT);
+
+// Default-enabled platforms: all (cross-profile paste and drag killswitch
+// applies across platforms).
+BASE_FEATURE(kGlicCrossProfileTransfer, base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kGlicTabGroups, base::FEATURE_DISABLED_BY_DEFAULT);
 BASE_FEATURE(kGlicSparkSettingsAccessibleLabels,
@@ -399,6 +404,8 @@ BASE_FEATURE_PARAM(std::string,
                    kGlicBrowserCommandFallbackUrl,
                    &kGlicBrowserCommandFallback,
                    "https://support.google.com/chrome/answer/17140089");
+
+BASE_FEATURE(kGlicWhatsNewQuizzes, base::FEATURE_DISABLED_BY_DEFAULT);
 
 BASE_FEATURE(kGlicForceFcmExperimentalTriggerFailure,
              base::FEATURE_DISABLED_BY_DEFAULT);

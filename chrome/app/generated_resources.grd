@@ -11453,6 +11453,14 @@ Check your passwords anytime in <ph name="GOOGLE_PASSWORD_MANAGER">$1<ex>Google 
       <message name="IDS_PICTURE_IN_PICTURE_MINIMIZE_CONTROL_TEXT" desc="Text label of the minimize control button. The button appears when the user hovers over the Picture-in-Picture window.">
         Minimize
       </message>
+      <if expr="is_chromeos">
+        <message name="IDS_PICTURE_IN_PICTURE_PIN_WINDOW_TEXT" desc="Text label of the pin control button. Pressing the button keeps the Picture-in-Picture window where the user places it, instead of snapping it to the edge of the screen. The button appears in the Picture-in-Picture window.">
+          Pin window
+        </message>
+        <message name="IDS_PICTURE_IN_PICTURE_UNPIN_WINDOW_TEXT" desc="Text label of the unpin control button. Pressing the button snaps the Picture-in-Picture window to the edge of the screen again. The button appears in the Picture-in-Picture window when the window is pinned.">
+          Unpin window
+        </message>
+      </if>
       <message name="IDS_PICTURE_IN_PICTURE_LIVE_CAPTION_CONTROL_TEXT" desc="Text label of the live caption button. The button appears when the user hovers over the Picture-in-Picture window.">
         Live Caption
       </message>
@@ -14174,9 +14182,6 @@ Please help our engineers fix this problem. Tell us what happened right before y
       <message name="IDS_RECENT_TABS_NO_DEVICE_TABS" desc="The label in the Recent Tabs menu in the wrench menu when there's no tabs from other devices.">
         No tabs from other devices
       </message>
-      <message name="IDS_RECENT_TABS_LOGIN_FOR_DEVICE_TABS" desc="The label in the Recent Tabs menu in the wrench menu to suggest logging in to see tabs from other devices.">
-        Sign in to see tabs from other devices
-      </message>
       <message name="IDS_RECENT_TABS_SEE_DEVICE_TABS" desc="The label in the Recent Tabs menu in the wrench menu to see tabs from other devices.">
         See tabs from other devices
       </message>
@@ -14217,6 +14222,9 @@ Please help our engineers fix this problem. Tell us what happened right before y
       </message>
       <message name="IDS_OTHER_DEVICE_TABS_SEE_MORE_TABS" desc="Label of the last row under a device in the 'Other device tabs' sub-menu of the wrench menu. It opens a sub-menu listing the remaining tabs open on that device. [ICU_Syntax]">
         {COUNT, plural, =1 {See 1 more tab} other {See # more tabs}}
+      </message>
+      <message name="IDS_OTHER_DEVICE_TABS_NO_OPEN_TABS" desc="Non-interactive header shown in place of open tabs under a device section in the 'Other device tabs' sub-menu of the wrench menu when that device has no open tabs.">
+        No open tabs on <ph name="DEVICE_NAME">$1<ex>iPad Air</ex></ph>
       </message>
       <message name="IDS_DEFAULT_DOWNLOAD_FILENAME" desc="Default name for downloaded files when we have no idea what they could be.">
         download
@@ -14625,11 +14633,20 @@ Please help our engineers fix this problem. Tell us what happened right before y
       <message name="IDS_TTC_MIC_MUTED_TOAST" translateable="false" desc="Text shown in a toast notification when the system mutes the microphone during a TTC session, e.g. with a hardware switch.">
         Your microphone is muted
       </message>
-      <message name="IDS_TTC_VOICE_PLATE_PROCESSING_ACCNAME" translateable="false" desc="Accessible status name for the TTC voice plate waveform while processing or connecting.">
-        Processing
+      <message name="IDS_TTC_VOICE_PLATE_INITIALIZING_ACCNAME" translateable="false" desc="Accessible status name for the TTC voice plate waveform while initializing.">
+        Initializing
       </message>
       <message name="IDS_TTC_VOICE_PLATE_LISTENING_ACCNAME" translateable="false" desc="Accessible status name announced by screen readers when the TTC voice plate is actively listening.">
         Listening
+      </message>
+      <message name="IDS_TTC_VOICE_PLATE_MIC_MUTED_ACCNAME" translateable="false" desc="Accessible status name announced by screen readers when the user mutes the microphone in the TTC voice plate.">
+        Microphone muted
+      </message>
+      <message name="IDS_TTC_VOICE_PLATE_MUTE" desc="Tooltip label of the TTC voice plate button that mutes the microphone in TTC." translateable="false">
+        Mute microphone
+      </message>
+      <message name="IDS_TTC_VOICE_PLATE_UNMUTE" desc="Tooltip label of the TTC voice plate button that unmutes the microphone in TTC." translateable="false">
+        Unmute microphone
       </message>
 
       <!-- Web and message center notifications -->
@@ -18201,8 +18218,11 @@ Please help our engineers fix this problem. Tell us what happened right before y
     </if>
 
     <!-- Glic Activity Hub Strings -->
-    <message name="IDS_GLIC_ACTIVITY_TITLE_GEMINI" desc="Default title shown in the Glic Activity Hub for a Gemini conversation.">
-      Gemini
+    <message name="IDS_GLIC_ACTIVITY_NEW_CHAT" desc="Placeholder title for a conversation row in the Gemini in Chrome Activity Hub bubble when the conversation does not have a title yet. Noun phrase.">
+      New chat
+    </message>
+    <message name="IDS_GLIC_ACTIVITY_UNTITLED_TASK" desc="Placeholder title for an automated task row in the Gemini in Chrome Activity Hub bubble when the task does not have a title. Noun phrase.">
+      Untitled task
     </message>
     <message name="IDS_GLIC_ACTIVITY_WORKING" desc="Status text shown in the Glic Activity Hub when Gemini is generating a response or performing a task.">
       Working…

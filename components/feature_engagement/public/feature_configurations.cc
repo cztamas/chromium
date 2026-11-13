@@ -1525,6 +1525,27 @@ std::optional<FeatureConfig> GetClientSideFeatureConfig(
     return config;
   }
 
+  if (kIPHNtpFuseboxAnimationFeature.name == feature->name) {
+    // A config for the NTP Fusebox animation that animates the (+) button and
+    // cycles the search box hint text.
+    // Triggers up to 5 times lifetime without blocking, being blocked by, or
+    // impacting other IPH features. Once-per-session gating is enforced
+    // client-side in SearchBoxMediator so other IPHs do not suppress it.
+    FeatureConfig config;
+    config.valid = true;
+    config.availability = kAlwaysAvailable;
+    config.session_rate = kNoRestrictions;
+    config.session_rate_impact.type = SessionRateImpact::Type::NONE;
+    config.blocking.type = Blocking::Type::NONE;
+    config.blocked_by.type = BlockedBy::Type::NONE;
+    config.trigger =
+        EventConfig("ntp_fusebox_animation_triggered", Comparator(LESS_THAN, 5),
+                    /*window=*/k10YearsInDays, /*storage=*/k10YearsInDays);
+    config.used = EventConfig("ntp_fusebox_animation_used", kAlwaysTrue,
+                              /*window=*/0, /*storage=*/0);
+    return config;
+  }
+
   if (kIPHNewTabPageThemeCustomizationFeature.name == feature->name) {
     // Allows an IPH for the theme customization entry point.
     // Once per kNewTabPageCustomizationV2IphDisplayIntervalDays days.
@@ -3592,11 +3613,11 @@ std::optional<FeatureConfig> GetClientSideFeatureConfig(
         EventConfig(events::kIOSGeminiLiveUsed, Comparator(EQUAL, 0),
                     /*window=*/kMaxWindowPeriod, /*storage=*/kMaxStoragePeriod);
 
-    // After the user has seen the Live 1st-time IPH (at least 1 time in last 14
-    // days).
+    // After the user has seen the Live 1st-time IPH (at least 1 time in last 8
+    // days, so the badge shows for 7 days starting the day after the IPH).
     config.event_configs.insert(
         EventConfig(events::kIOSGeminiLiveIPHTriggered,
-                    Comparator(GREATER_THAN_OR_EQUAL, 1), /*window=*/14,
+                    Comparator(GREATER_THAN_OR_EQUAL, 1), /*window=*/8,
                     /*storage=*/kMaxStoragePeriod));
     // Show the "new" badge the next day (0 times today).
     config.event_configs.insert(EventConfig(events::kIOSGeminiLiveIPHTriggered,

@@ -121,6 +121,7 @@
 #include "chrome/browser/history_clusters/history_clusters_service_factory.h"
 #include "chrome/browser/indigo/indigo_service_factory.h"
 #include "chrome/browser/language/accept_languages_service_factory.h"
+#include "chrome/browser/language/grammatical_gender_service_factory.h"
 #include "chrome/browser/language/language_model_manager_factory.h"
 #include "chrome/browser/language/url_language_histogram_factory.h"
 #include "chrome/browser/language_detection/language_detection_model_service_factory.h"
@@ -211,6 +212,7 @@
 #include "chrome/browser/profiles/batch_upload/batch_upload_service_factory.h"
 #include "chrome/browser/profiles/renderer_updater_factory.h"
 #include "chrome/browser/push_messaging/push_messaging_service_factory.h"
+#include "chrome/browser/readaloud/read_aloud_service_factory.h"
 #include "chrome/browser/reader_mode/reader_mode_service_factory.h"
 #include "chrome/browser/reading_list/reading_list_model_factory.h"
 #include "chrome/browser/regional_capabilities/regional_capabilities_service_factory.h"
@@ -279,6 +281,7 @@
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/webui/ntp/ntp_resource_cache_factory.h"
 #include "chrome/browser/ui/webui/signin/history_sync_optin_service_factory.h"
+#include "chrome/browser/ui/webui/theme_colors_source_manager_factory.h"
 #include "chrome/browser/undo/bookmark_undo_service_factory.h"
 #include "chrome/browser/unified_consent/unified_consent_service_factory.h"
 #include "chrome/browser/universal_optout/universal_optout_service_factory.h"
@@ -357,7 +360,6 @@
 #include "chrome/browser/ntp_customization/ntp_android_background_service_factory.h"
 #include "chrome/browser/ntp_customization/ntp_android_custom_background_service_factory.h"
 #include "chrome/browser/password_manager/android/delayed_password_field_classification_model_handler_factory.h"
-#include "chrome/browser/readaloud/read_aloud_service_factory.h"
 #include "chrome/browser/signin/android/signin_bridge_factory.h"
 #include "chrome/browser/signin/signin_manager_android_factory.h"
 #include "chrome/browser/ui/android/android_profile_browser_collection_service_factory.h"
@@ -416,7 +418,6 @@
 #include "chrome/browser/ui/views/profiles/avatar_toolbar_button_state_manager.h"
 #include "chrome/browser/ui/waap/initial_webui_profile_service_factory.h"
 #include "chrome/browser/ui/waap/waap_ui_metrics_service_factory.h"
-#include "chrome/browser/ui/webui/theme_colors_source_manager_factory.h"
 #include "chrome/browser/usb/usb_connection_tracker_factory.h"
 #include "chrome/browser/user_education/user_education_service_factory.h"
 #include "chrome/browser/web_applications/isolated_web_apps/window_management/isolated_web_apps_window_open_permission_service_factory.h"
@@ -1074,6 +1075,7 @@ void ChromeBrowserMainExtraPartsProfiles::
   GlobalErrorServiceFactory::GetInstance();
 #endif
   GoogleGroupsManagerFactory::GetInstance();
+  GrammaticalGenderServiceFactory::GetInstance();
   HatsServiceFactory::GetInstance();
   HeavyAdServiceFactory::GetInstance();
   HidChooserContextFactory::GetInstance();
@@ -1353,9 +1355,7 @@ void ChromeBrowserMainExtraPartsProfiles::
   ProtocolHandlerRegistryFactory::GetInstance();
   ProviderStateServiceFactory::GetInstance();
   PushMessagingServiceFactory::GetInstance();
-#if BUILDFLAG(IS_ANDROID)
   readaloud::ReadAloudServiceFactory::GetInstance();
-#endif
 #if !BUILDFLAG(IS_ANDROID)
   ReadAnythingServiceFactory::GetInstance();
 #endif
@@ -1528,9 +1528,7 @@ void ChromeBrowserMainExtraPartsProfiles::
   TemplateURLPrepopulateData::ResolverFactory::GetInstance();
   TemplateURLServiceFactory::GetInstance();
   tips::TipsServiceFactory::GetInstance();
-#if !BUILDFLAG(IS_ANDROID)
   ThemeColorsSourceManagerFactory::GetInstance();
-#endif
   ThemeServiceFactory::GetInstance();
 #if BUILDFLAG(IS_ANDROID)
   thin_webview::android::ChromeThinWebViewInitializer::Initialize();

@@ -64,8 +64,13 @@ class OmniboxFullPopupWebUIContent
 
   // Whether the popup has presented a frame since it was last shown.
   void OnPopupWidgetPresentedChanged(bool presented);
+  bool popup_presented_for_testing() const { return popup_presented_; }
 
   void CancelPendingContextMenuRequest();
+
+  // Shows or hides the WebUI's AI Mode button to match the location bar's AI
+  // Mode page action.
+  void UpdateAimButtonVisibility();
 
   // content::WebContentsObserver:
   void OnFocusChangedInPage(

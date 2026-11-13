@@ -43,7 +43,6 @@
 #include "third_party/blink/renderer/core/css/css_private_bindings.h"
 #include "third_party/blink/renderer/core/css/css_selector.h"
 #include "third_party/blink/renderer/core/css/css_selector_list.h"
-#include "third_party/blink/renderer/core/css/css_unparsed_declaration_value.h"
 #include "third_party/blink/renderer/core/css/media_values.h"
 #include "third_party/blink/renderer/core/css/mixin_map.h"
 #include "third_party/blink/renderer/core/css/navigation_query.h"
@@ -56,7 +55,6 @@
 #include "third_party/blink/renderer/core/css/style_rule_counter_style.h"
 #include "third_party/blink/renderer/core/css/style_rule_font_feature_values.h"
 #include "third_party/blink/renderer/core/css/style_rule_font_palette_values.h"
-#include "third_party/blink/renderer/core/css/style_rule_function_declarations.h"
 #include "third_party/blink/renderer/core/css/style_rule_import.h"
 #include "third_party/blink/renderer/core/css/style_rule_location.h"
 #include "third_party/blink/renderer/core/css/style_rule_nested_declarations.h"
@@ -985,7 +983,7 @@ void RuleSet::AddViewTransitionRule(StyleRuleViewTransition* rule,
 namespace {
 
 void CollectPrivateBindings(base::span<const Member<StyleRuleBase>> rules,
-                            const PropertyRegistry& registry,
+                            const PrivateNameMap& hygienic_to_authored_names,
                             PrivateNameMap& bindings) {
   for (const StyleRuleBase* rule : rules) {
     if (rule->IsPrivateRule()) {
@@ -995,15 +993,28 @@ void CollectPrivateBindings(base::span<const Member<StyleRuleBase>> rules,
           continue;
         }
         const AtomicString& private_name = property.CustomPropertyName();
-        bindings.Set(registry.AuthoredPrivatePropertyName(private_name),
-                     private_name);
+        auto authored = hygienic_to_authored_names.find(private_name);
+        if (authored != hygienic_to_authored_names.end()) {
+          bindings.Set(authored->value, private_name);
+        }
       }
     } else if (rule->IsConditionRule() || rule->IsLayerBlockRule() ||
-               rule->IsScopeRule() || rule->IsNavigationRule()) {
+               rule->IsScopeRule() || rule->IsNavigationRule() ||
+               rule->IsApplyMixinRule() || rule->IsContentsRule()) {
       // @private names in nested group rules belong to the nearest style rule.
-      CollectPrivateBindings(To<StyleRuleGroup>(rule)->ChildRules(), registry,
-                             bindings);
+      CollectPrivateBindings(To<StyleRuleGroup>(rule)->ChildRules(),
+                             hygienic_to_authored_names, bindings);
     }
+  }
+}
+
+void RenamePrivateBindings(
+    PrivateNameMap& bindings,
+    const PrivateNameMap& mixin_to_local_hygienic_names) {
+  for (auto& binding : bindings) {
+    auto renamed = mixin_to_local_hygienic_names.find(binding.value);
+    CHECK(renamed != mixin_to_local_hygienic_names.end());
+    binding.value = renamed->value;
   }
 }
 
@@ -1012,7 +1023,8 @@ void CollectPrivateBindings(base::span<const Member<StyleRuleBase>> rules,
 const CSSPrivateBindings* RuleSet::PrivateScopeForRules(
     base::span<const Member<StyleRuleBase>> rules) const {
   PrivateNameMap bindings;
-  CollectPrivateBindings(rules, *private_property_registry_, bindings);
+  CollectPrivateBindings(
+      rules, private_property_registry_->GetAuthoredPrivateNames(), bindings);
   if (bindings.empty()) {
     return private_scope_;
   }
@@ -1020,10 +1032,59 @@ const CSSPrivateBindings* RuleSet::PrivateScopeForRules(
                                                   std::move(bindings));
 }
 
+const CSSPrivateBindings* RuleSet::PrivateScopeForMixinRules(
+    base::span<const Member<StyleRuleBase>> rules,
+    const ApplyingMixin& applying_mixin) const {
+  PrivateNameMap bindings;
+  CollectPrivateBindings(rules, applying_mixin.mixin->GetAuthoredPrivateNames(),
+                         bindings);
+  RenamePrivateBindings(bindings, applying_mixin.mixin_to_local_hygienic_names);
+  if (bindings.empty()) {
+    return private_scope_;
+  }
+  return MakeGarbageCollected<CSSPrivateBindings>(private_scope_,
+                                                  std::move(bindings));
+}
+
+namespace {
+
+CSSPropertyValueSet* RenamePrivateDeclarations(
+    const CSSPropertyValueSet& declarations,
+    const PrivateNameMap& mixin_to_local_hygienic_names) {
+  HeapVector<CSSPropertyValue> properties;
+  properties.ReserveInitialCapacity(declarations.PropertyCount());
+  for (const CSSPropertyValue& property : declarations.Properties()) {
+    if (property.PropertyID() != CSSPropertyID::kVariable) {
+      continue;
+    }
+    auto it = mixin_to_local_hygienic_names.find(property.CustomPropertyName());
+    if (it != mixin_to_local_hygienic_names.end()) {
+      properties.emplace_back(CSSPropertyName(it->value), property.Value());
+    }
+  }
+  if (properties.empty()) {
+    return nullptr;
+  }
+  return ImmutableCSSPropertyValueSet::Create(properties,
+                                              declarations.CssParserMode());
+}
+
+}  // namespace
+
 const CSSPrivateBindings* RuleSet::GetCSSPrivateBindings(
     const StyleRule& rule) const {
   auto it = private_bindings_.find(&rule);
   return it == private_bindings_.end() ? nullptr : it->value.Get();
+}
+
+const RuleSet::ApplyingMixin* RuleSet::MixinBeingApplied(
+    const ApplyMixinsStack& stack) {
+  for (wtf_size_t i = stack.size(); i > 0; --i) {
+    if (!stack[i - 1].is_in_contents) {
+      return &stack[i - 1];
+    }
+  }
+  return nullptr;
 }
 
 void RuleSet::AddChildRules(StyleRule* parent_rule,
@@ -1038,20 +1099,35 @@ void RuleSet::AddChildRules(StyleRule* parent_rule,
   for (StyleRuleBase* rule : rules) {
     if (auto* style_rule = DynamicTo<StyleRule>(rule)) {
       if (style_rule->IsPrivateRule()) {
-        if (parent_rule && apply_mixins_stack.empty()) {
-          // Add the @private declarations as a rule with the parent's
-          // selectors, so they cascade with the parent's other declarations.
-          auto selectors = CSSSelectorList::Copy(parent_rule->FirstSelector());
-          StyleRule* declarations = StyleRule::Create(
-              selectors,
-              const_cast<CSSPropertyValueSet*>(&style_rule->Properties()),
-              parent_rule->GetMixinParameterBindings());
-          AddStyleRule(declarations, parent_rule, medium, mixins,
-                       add_rule_flags, apply_mixins_stack, container_queries,
-                       cascade_layer, style_scope);
-          if (private_scope_) {
-            private_bindings_.Set(declarations,
-                                  private_scope_->ForPrivateDeclarations());
+        if (parent_rule) {
+          CSSPropertyValueSet* declarations_properties = nullptr;
+          const MixinParameterBindings* parameter_bindings = nullptr;
+          const ApplyingMixin* applying_mixin =
+              MixinBeingApplied(apply_mixins_stack);
+          if (!applying_mixin) {
+            declarations_properties =
+                const_cast<CSSPropertyValueSet*>(&style_rule->Properties());
+            parameter_bindings = parent_rule->GetMixinParameterBindings();
+          } else {
+            declarations_properties = RenamePrivateDeclarations(
+                style_rule->Properties(),
+                applying_mixin->mixin_to_local_hygienic_names);
+            parameter_bindings = applying_mixin->mixin_parameter_bindings;
+          }
+          if (declarations_properties) {
+            // Add the @private declarations as a rule with the parent's
+            // selectors, so they cascade with the parent's other declarations.
+            auto selectors =
+                CSSSelectorList::Copy(parent_rule->FirstSelector());
+            StyleRule* declarations = StyleRule::Create(
+                selectors, declarations_properties, parameter_bindings);
+            AddStyleRule(declarations, parent_rule, medium, mixins,
+                         add_rule_flags, apply_mixins_stack, container_queries,
+                         cascade_layer, style_scope);
+            if (private_scope_) {
+              private_bindings_.Set(declarations,
+                                    private_scope_->ForPrivateDeclarations());
+            }
           }
         }
         continue;
@@ -1165,91 +1241,25 @@ void RuleSet::AddChildRules(StyleRule* parent_rule,
             contents_rule->Clone(parent_rule, mixin_parameter_bindings));
       }
       if (rules_to_add) {
+        // The @apply's @contents block only sees the @private variables in
+        // scope at the @apply. The fallback block belongs to the mixin.
+        bool is_from_apply = apply->HasContentsBlock();
+        Member<const CSSPrivateBindings> mixin_private_scope = private_scope_;
+        if (is_from_apply) {
+          private_scope_ = apply_mixins_stack.back().outer_private_scope;
+        }
+        apply_mixins_stack.back().is_in_contents = is_from_apply;
         AddChildRules(parent_rule, rules_to_add->ChildRules(), medium, mixins,
                       add_rule_flags, container_queries, cascade_layer,
                       style_scope, apply_mixins_stack);
+        apply_mixins_stack.back().is_in_contents = false;
+        private_scope_ = mixin_private_scope;
       }
     } else if (auto* nested_declarations =
                    DynamicTo<StyleRuleNestedDeclarations>(rule)) {
       AddStyleRule(nested_declarations->InnerStyleRule(), parent_rule, medium,
                    mixins, add_rule_flags, apply_mixins_stack,
                    container_queries, cascade_layer, style_scope);
-    } else if (StyleRuleResult* result_rule =
-                   DynamicTo<StyleRuleResult>(rule)) {
-      // If we see a @result, it means we are within a @mixin.
-      const auto& mixin_parameter_bindings =
-          apply_mixins_stack.back().mixin_parameter_bindings;
-      AddChildRules(
-          parent_rule,
-          To<StyleRuleResult>(
-              result_rule->Clone(parent_rule, mixin_parameter_bindings))
-              ->ChildRules(),
-          medium, mixins, add_rule_flags, container_queries, cascade_layer,
-          style_scope, apply_mixins_stack);
-    }
-  }
-}
-
-void RuleSet::FlattenMixinLocals(
-    base::span<const Member<StyleRuleBase>> rules,
-    const MediaQueryEvaluator& medium,
-    const ContainerQuerySet* container_queries,
-    HeapHashMap<String, Member<CSSVariableData>>& locals,
-    HeapHashMap<String, HeapVector<MixinParameterBindings::CQDependentValue>>&
-        cq_dependent_locals) {
-  for (StyleRuleBase* rule : rules) {
-    if (auto* media_rule = DynamicTo<StyleRuleMedia>(rule)) {
-      if (MatchMediaForAddRules(medium, media_rule->MediaQueries())) {
-        FlattenMixinLocals(media_rule->ChildRules(), medium, container_queries,
-                           locals, cq_dependent_locals);
-      }
-    } else if (auto* supports_rule = DynamicTo<StyleRuleSupports>(rule)) {
-      if (supports_rule->ConditionIsSupported()) {
-        FlattenMixinLocals(supports_rule->ChildRules(), medium,
-                           container_queries, locals, cq_dependent_locals);
-      }
-    } else if (auto* container_rule = DynamicTo<StyleRuleContainer>(rule)) {
-      const ContainerQuerySet* inner_container_queries =
-          &container_rule->GetContainerQuerySet();
-      if (container_queries) {
-        inner_container_queries =
-            inner_container_queries->CopyWithParent(container_queries);
-      }
-      FlattenMixinLocals(container_rule->ChildRules(), medium,
-                         inner_container_queries, locals, cq_dependent_locals);
-    } else if (StyleRuleFunctionDeclarations* function_declarations =
-                   DynamicTo<StyleRuleFunctionDeclarations>(rule)) {
-      for (const CSSPropertyValue& value :
-           function_declarations->Properties().Properties()) {
-        const AtomicString& name = value.CustomPropertyName();
-        CSSVariableData* variable_data =
-            To<CSSUnparsedDeclarationValue>(value.Value()).VariableDataValue();
-
-        // Locals outside of container queries override all earlier locals.
-        // Locals inside container queries will only override locals with
-        // the same container query (since we don't attempt to find out if
-        // CQs are supersets of all CQs).
-        if (container_queries) {
-          auto& inserted =
-              cq_dependent_locals
-                  .insert(
-                      name,
-                      HeapVector<MixinParameterBindings::CQDependentValue>{})
-                  .stored_value->value;
-          auto new_end = std::remove_if(
-              inserted.begin(), inserted.end(),
-              [container_queries](
-                  const MixinParameterBindings::CQDependentValue& value) {
-                return value.container_queries == container_queries;
-              });
-          inserted.erase(new_end, inserted.end());
-          inserted.push_back(MixinParameterBindings::CQDependentValue{
-              variable_data, Member{container_queries}});
-        } else {
-          locals.Set(name, variable_data);
-          cq_dependent_locals.erase(name);
-        }
-      }
     }
   }
 }
@@ -1300,10 +1310,28 @@ void RuleSet::ApplyMixin(StyleRule* parent_rule,
       return;
     }
 
+    PrivateNameMap mixin_to_local_hygienic_names;
+    PrivateNameMap private_names;
+    if (RuntimeEnabledFeatures::CSSPrivateEnabled()) {
+      for (const auto& entry : mixin_rule->GetAuthoredPrivateNames()) {
+        mixin_to_local_hygienic_names.Set(
+            entry.key, PropertyRegistry::AllocatePrivatePropertyName());
+      }
+      CollectPrivateBindings(mixin_rule->ChildRules(),
+                             mixin_rule->GetAuthoredPrivateNames(),
+                             private_names);
+      RenamePrivateBindings(private_names, mixin_to_local_hygienic_names);
+    }
+
     HeapHashMap<String, MixinParameterBindings::Binding> bindings;
     for (unsigned i = 0; i < mixin_rule->GetParameters().size(); ++i) {
       const StyleRuleFunction::Parameter& parameter =
           mixin_rule->GetParameters()[i];
+      if (private_names.Contains(AtomicString(parameter.name))) {
+        // The @private variable wins over a parameter with the same name, so
+        // don't bind the parameter.
+        continue;
+      }
       CSSVariableData* argument_data = nullptr;
       if (i < apply_mixin_rule->GetArguments().size()) {
         argument_data = apply_mixin_rule->GetArguments()[i];
@@ -1320,29 +1348,34 @@ void RuleSet::ApplyMixin(StyleRule* parent_rule,
               argument_data, parameter.default_value, parameter.type});
     }
 
-    // Collect any locals from the mixin.
-    HeapHashMap<String, Member<CSSVariableData>> locals;
-    HeapHashMap<String, HeapVector<MixinParameterBindings::CQDependentValue>>
-        cq_dependent_locals;
-    FlattenMixinLocals(mixin_rule->ChildRules(), medium,
-                       /*container_queries=*/nullptr, locals,
-                       cq_dependent_locals);
-
     MixinParameterBindings* mixin_parameter_bindings =
         MakeGarbageCollected<MixinParameterBindings>(
-            std::move(bindings), std::move(locals),
-            std::move(cq_dependent_locals),
+            std::move(bindings),
             apply_mixins_stack.empty()
                 ? nullptr
-                : apply_mixins_stack.back().mixin_parameter_bindings);
+                : apply_mixins_stack.back().mixin_parameter_bindings,
+            private_scope_);
+
+    const CSSPrivateBindings* outer_private_scope = private_scope_;
 
     apply_mixins_stack.push_back(
         ApplyingMixin{.mixin = mixin_rule,
                       .invoking_apply_rule = apply_mixin_rule,
-                      .mixin_parameter_bindings = mixin_parameter_bindings});
-    AddChildRules(parent_rule, mixin_rule->ChildRules(), medium, mixins,
+                      .mixin_parameter_bindings = mixin_parameter_bindings,
+                      .outer_private_scope = outer_private_scope,
+                      .mixin_to_local_hygienic_names =
+                          std::move(mixin_to_local_hygienic_names)});
+    Member<const CSSPrivateBindings> previous_private_scope = private_scope_;
+    if (!private_names.empty()) {
+      private_scope_ = MakeGarbageCollected<CSSPrivateBindings>(
+          private_scope_, std::move(private_names));
+    }
+    auto* applied_mixin = To<StyleRuleMixin>(
+        mixin_rule->Clone(parent_rule, mixin_parameter_bindings));
+    AddChildRules(parent_rule, applied_mixin->ChildRules(), medium, mixins,
                   add_rule_flags, container_queries, cascade_layer, style_scope,
                   apply_mixins_stack);
+    private_scope_ = previous_private_scope;
     apply_mixins_stack.pop_back();
 
     // If the @mixin we are applying (or currently: any @mixin) was defined
@@ -1536,14 +1569,15 @@ void RuleSet::AddStyleRule(StyleRule* style_rule,
                            const ContainerQuerySet* container_queries,
                            CascadeLayer* cascade_layer,
                            const StyleScope* style_scope) {
-  // TODO(crbug.com/542651959): Support @private inside mixins. Each @apply
-  // needs fresh hygienic names and the original registrations are in the
-  // defining stylesheet's PropertyRegistry.
   const CSSPrivateBindings* local_private_scope = private_scope_;
-  if (RuntimeEnabledFeatures::CSSPrivateEnabled() &&
-      apply_mixins_stack.empty() && private_property_registry_ &&
-      style_rule->ChildRules()) {
-    local_private_scope = PrivateScopeForRules(*style_rule->ChildRules());
+  if (RuntimeEnabledFeatures::CSSPrivateEnabled() && style_rule->ChildRules()) {
+    if (const ApplyingMixin* applying_mixin =
+            MixinBeingApplied(apply_mixins_stack)) {
+      local_private_scope =
+          PrivateScopeForMixinRules(*style_rule->ChildRules(), *applying_mixin);
+    } else if (private_property_registry_) {
+      local_private_scope = PrivateScopeForRules(*style_rule->ChildRules());
+    }
   }
   Member<const CSSPrivateBindings> previous_private_scope = private_scope_;
   private_scope_ = local_private_scope;

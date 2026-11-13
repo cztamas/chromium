@@ -65,7 +65,7 @@ BASE_FEATURE_PARAM(bool,
 BASE_FEATURE_PARAM(bool,
                    kMigratedGoogleApiKeys,
                    &kCentralizedInfoBarFramework,
-                   false);
+                   true);
 
 BASE_FEATURE_PARAM(bool,
                    kMigratedIncognitoConnectability,
@@ -100,9 +100,9 @@ BASE_FEATURE_PARAM(bool,
 BASE_FEATURE_PARAM(bool,
                    kMigratedPageInfo,
                    &kCentralizedInfoBarFramework,
-                   false);
+                   true);
 
-BASE_FEATURE_PARAM(bool, kMigratedPdf, &kCentralizedInfoBarFramework, false);
+BASE_FEATURE_PARAM(bool, kMigratedPdf, &kCentralizedInfoBarFramework, true);
 BASE_FEATURE_PARAM(bool,
                    kMigratedObsoleteSystem,
                    &kCentralizedInfoBarFramework,
@@ -116,7 +116,7 @@ BASE_FEATURE_PARAM(bool,
 BASE_FEATURE_PARAM(bool,
                    kMigratedChromeForTesting,
                    &kCentralizedInfoBarFramework,
-                   false);
+                   true);
 
 BASE_FEATURE_PARAM(bool,
                    kMigratedPinInfoBar,

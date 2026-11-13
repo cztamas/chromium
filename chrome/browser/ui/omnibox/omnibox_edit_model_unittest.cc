@@ -53,6 +53,7 @@
 #include "components/omnibox/browser/test_omnibox_client.h"
 #include "components/omnibox/browser/test_scheme_classifier.h"
 #include "components/omnibox/browser/unscoped_extension_provider.h"
+#include "components/omnibox/common/composebox_features.h"
 #include "components/omnibox/common/omnibox_feature_configs.h"
 #include "components/omnibox/common/omnibox_features.h"
 #include "components/omnibox/common/omnibox_focus_state.h"
@@ -337,6 +338,44 @@ TEST_F(OmniboxEditModelTest, RevertZeroSuggestTemporaryText) {
   // `INTERACTION_FOCUS`.
   EXPECT_EQ(metrics::OmniboxFocusType::INTERACTION_FOCUS,
             controller()->autocomplete_controller()->input().focus_type());
+}
+
+TEST_F(OmniboxEditModelTest, RevertUneditedText) {
+  location_bar_model()->set_url(GURL("https://www.example.com/"));
+  location_bar_model()->set_url_for_display(u"example.com");
+  EXPECT_TRUE(model()->ResetDisplayTexts());
+  model()->Revert();
+
+  // Unelided permanent text without user input reverts back to display text.
+  model()->Unelide();
+  EXPECT_EQ(u"https://www.example.com/", view()->GetText());
+  model()->RevertUneditedText();
+  EXPECT_EQ(u"example.com", view()->GetText());
+  EXPECT_FALSE(model()->user_input_in_progress());
+
+  // User text matching the permanent display text or full URL reverts.
+  model()->SetUserText(u"example.com");
+  EXPECT_TRUE(model()->user_input_in_progress());
+  model()->RevertUneditedText();
+  EXPECT_FALSE(model()->user_input_in_progress());
+
+  model()->SetUserText(u"https://www.example.com/");
+  EXPECT_TRUE(model()->user_input_in_progress());
+  model()->RevertUneditedText();
+  EXPECT_FALSE(model()->user_input_in_progress());
+
+  // Edited drafts and keyword mode stay untouched.
+  model()->SetUserText(u"draft");
+  model()->RevertUneditedText();
+  EXPECT_TRUE(model()->user_input_in_progress());
+  EXPECT_EQ(u"draft", model()->user_text());
+
+  model()->SetUserText(u"");
+  model()->EnterKeywordModeForDefaultSearchProvider(
+      OmniboxEventProto::KEYBOARD_SHORTCUT);
+  ASSERT_TRUE(model()->is_keyword_selected());
+  model()->RevertUneditedText();
+  EXPECT_TRUE(model()->is_keyword_selected());
 }
 
 TEST_F(OmniboxEditModelTest, FullWebUISuppressesZeroSuggestRequest) {
@@ -2434,6 +2473,30 @@ TEST_F(OmniboxEditModelPopupTest, AimPopupEnabledPopupOpened) {
       "Omnibox.AimEntrypoint.Activated.ViaKeyboard", false, 1);
   histogram_tester.ExpectBucketCount(
       "Omnibox.AimEntrypoint.Activated.UserTextPresent", false, 1);
+}
+
+// The AI Mode button opens the compose box in AI Mode; the "+" menu doesn't,
+// even right after the button.
+TEST_F(OmniboxEditModelPopupTest, AiModeButtonEntersAimMode) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitWithFeatures(
+      {omnibox::kDynamicAimFulfillment, omnibox::kDynamicAimFulfillmentOmnibox},
+      {});
+  EXPECT_CALL(*client(), IsAimPopupEnabled()).WillRepeatedly(Return(true));
+
+  model()->OpenAiMode(OmniboxEditModel::AimActivation::kClickOrGesture);
+  EXPECT_TRUE(model()->enter_aim_mode());
+
+  model()->OpenAiMode(OmniboxEditModel::AimActivation::kContextMenu);
+  EXPECT_FALSE(model()->enter_aim_mode());
+}
+
+TEST_F(OmniboxEditModelPopupTest,
+       AiModeButtonWithoutDynamicAimFulfillmentDoesNotEnterAimMode) {
+  EXPECT_CALL(*client(), IsAimPopupEnabled()).WillRepeatedly(Return(true));
+
+  model()->OpenAiMode(OmniboxEditModel::AimActivation::kClickOrGesture);
+  EXPECT_FALSE(model()->enter_aim_mode());
 }
 
 TEST_F(OmniboxEditModelPopupTest, RecordAiModeMetrics_ThirdParty) {

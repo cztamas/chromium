@@ -1183,7 +1183,7 @@ public final class StatusMediatorUnitTest {
         doReturn(true).when(mNewTabPageDelegate).isCurrentlyVisible();
         ComposeplateUtils.setIsEnabledForTesting(true);
 
-        // Focus the search box (sets mUrlHasFocus = true).
+        // Focus the search box (begins input session).
         mMediator.beginInput(mFuseboxSessionState);
 
         mMediator.updateLocationBarIcon(IconTransitionType.CROSSFADE);
@@ -1379,6 +1379,25 @@ public final class StatusMediatorUnitTest {
         // 4. Assert the late @wiki icon callback was safely discarded because active data is
         // @gemini
         assertNotEquals("wiki_icon", getIconIdentifierForTesting());
+    }
+
+    @Test
+    public void testDestroy_duringActiveSession_unregistersInputObservers() {
+        mMediator.beginInput(mFuseboxSessionState);
+
+        assertTrue(mAutocompleteInput.getSiteSearchDataSupplier().hasObservers());
+        assertTrue(mAutocompleteInput.getRequestTypeSupplier().hasObservers());
+        assertTrue(mAutocompleteInput.getPreviewMatchUrlSupplier().hasObservers());
+        assertTrue(mAutocompleteInput.getDisplayStateSupplier().hasObservers());
+        assertTrue(mAutocompleteInput.getAutocompleteStateSupplier().hasObservers());
+
+        mMediator.destroy();
+
+        assertFalse(mAutocompleteInput.getSiteSearchDataSupplier().hasObservers());
+        assertFalse(mAutocompleteInput.getRequestTypeSupplier().hasObservers());
+        assertFalse(mAutocompleteInput.getPreviewMatchUrlSupplier().hasObservers());
+        assertFalse(mAutocompleteInput.getDisplayStateSupplier().hasObservers());
+        assertFalse(mAutocompleteInput.getAutocompleteStateSupplier().hasObservers());
     }
 
     @Test

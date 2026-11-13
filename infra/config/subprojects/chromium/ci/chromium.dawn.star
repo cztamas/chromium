@@ -3013,42 +3013,22 @@ ci.thin_tester(
         # should be running the same test_suites as
         # 'Dawn Win10 x64 Release (NVIDIA)'
         targets = [
-            "dawn_chromium_isolated_scripts",
-            "gpu_common_gtests_passthrough",
-            targets.bundle(
-                targets = "gpu_dawn_telemetry_win_x64_tests",
-                mixins = [
-                    targets.mixin(
-                        args = [
-                            # TODO(crbug.com/574658973): Remove this once the
-                            # driver shader cache slowdown is resolved.
-                            "--clear-system-shader-cache",
-                        ],
-                    ),
-                ],
-            ),
+            "gpu_noop_sleep_telemetry_test",
         ],
         mixins = [
             "limited_capacity_bot",
             "win10_nvidia_gtx_1660_experimental",
         ],
-        per_test_modifications = {
-            "gl_unittests": targets.mixin(
-                args = [
-                    "--test-launcher-filter-file=../../testing/buildbot/filters/win.nvidia.gtx.1660.gl_unittests.filter",
-                ],
-            ),
-        },
     ),
     targets_settings = targets.settings(
         browser_config = targets.browser_config.RELEASE_X64,
         os_type = targets.os_type.WINDOWS,
     ),
     # Uncomment this entry when this experimental tester is actually in use.
-    console_view_entry = consoles.console_view_entry(
-        category = "ToT|Windows|x64|Nvidia",
-        short_name = "exp",
-    ),
+    # console_view_entry = consoles.console_view_entry(
+    #     category = "ToT|Windows|x64|Nvidia",
+    #     short_name = "exp",
+    # ),
     list_view = "chromium.gpu.experimental",
     execution_timeout = 6 * time.hour,
 )
@@ -3077,8 +3057,19 @@ ci.thin_tester(
         targets = [
             "dawn_chromium_isolated_scripts",
             "gpu_common_gtests_passthrough",
-            "gpu_dawn_telemetry_win_x64_tests",
             "gpu_dawn_webgpu_cts_default_features",
+            targets.bundle(
+                targets = "gpu_dawn_telemetry_win_x64_tests",
+                mixins = [
+                    targets.mixin(
+                        args = [
+                            # TODO(crbug.com/574658973): Remove this once the
+                            # driver shader cache slowdown is resolved.
+                            "--clear-system-shader-cache",
+                        ],
+                    ),
+                ],
+            ),
         ],
         mixins = [
             "win10_nvidia_gtx_1660_stable",
@@ -3278,11 +3269,23 @@ ci.thin_tester(
             "win10_nvidia_gtx_1660_stable",
         ],
         per_test_modifications = {
+            "webgpu_blink_web_tests": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
+            "webgpu_blink_web_tests_with_backend_validation": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
             "webgpu_cts_fxc_with_validation_tests": targets.remove(
                 reason = [
                     "Disable testing with validation on x86 where they frequently OOM.",
                     "See crbug.com/1444815.",
                 ],
+            ),
+            "webgpu_swiftshader_blink_web_tests": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
+            "webgpu_swiftshader_blink_web_tests_with_backend_validation": targets.remove(
+                reason = "crbug.com/570690123",
             ),
         },
     ),
@@ -3512,11 +3515,23 @@ ci.thin_tester(
             "win10_nvidia_gtx_1660_stable",
         ],
         per_test_modifications = {
+            "webgpu_blink_web_tests": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
+            "webgpu_blink_web_tests_with_backend_validation": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
             "webgpu_cts_fxc_with_validation_tests": targets.remove(
                 reason = [
                     "Disable testing with validation on x86 where they frequently OOM.",
                     "See crbug.com/1444815.",
                 ],
+            ),
+            "webgpu_swiftshader_blink_web_tests": targets.remove(
+                reason = "crbug.com/570690123",
+            ),
+            "webgpu_swiftshader_blink_web_tests_with_backend_validation": targets.remove(
+                reason = "crbug.com/570690123",
             ),
         },
     ),

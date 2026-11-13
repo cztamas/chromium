@@ -45,6 +45,7 @@
 #include "cc/paint/skia_paint_canvas.h"
 #include "components/viz/common/resources/shared_image_format.h"
 #include "components/viz/common/resources/shared_image_format_utils.h"
+#include "components/viz/common/resources/transferable_resource.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/raster_interface.h"
 #include "gpu/command_buffer/client/shared_image_pool.h"
@@ -108,7 +109,6 @@
 #include "third_party/blink/renderer/platform/graphics/accelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/blend_mode.h"
-#include "third_party/blink/renderer/platform/graphics/canvas_2d_resource_provider.h"
 #include "third_party/blink/renderer/platform/graphics/canvas_image_provider.h"
 #include "third_party/blink/renderer/platform/graphics/exported_canvas_resource.h"
 #include "third_party/blink/renderer/platform/graphics/flush_reason.h"
@@ -124,6 +124,7 @@
 #include "third_party/blink/renderer/platform/graphics/scoped_raster_timer.h"
 #include "third_party/blink/renderer/platform/graphics/skia/skia_utils.h"
 #include "third_party/blink/renderer/platform/graphics/static_bitmap_image.h"
+#include "third_party/blink/renderer/platform/graphics/static_bitmap_image_transform.h"
 #include "third_party/blink/renderer/platform/graphics/unaccelerated_static_bitmap_image.h"
 #include "third_party/blink/renderer/platform/graphics/video_frame_image_util.h"
 #include "third_party/blink/renderer/platform/heap/garbage_collected.h"
@@ -136,6 +137,7 @@
 #include "third_party/blink/renderer/platform/text/unicode_bidi.h"
 #include "third_party/blink/renderer/platform/timer.h"
 #include "third_party/blink/renderer/platform/wtf/casting.h"
+#include "third_party/blink/renderer/platform/wtf/cross_thread_functional.h"
 #include "third_party/blink/renderer/platform/wtf/forward.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
 #include "third_party/blink/renderer/platform/wtf/math_extras.h"
@@ -203,22 +205,13 @@ BaseRenderingContext2D::~BaseRenderingContext2D() {
   if (HasBacking()) {
     CanvasMemoryDumpProvider::Instance()->UnregisterClient(this);
   }
-  if (shared_image_provider_ && RasterInterface()) {
+  if (image_pool_ && RasterInterface()) {
     // Last chance for outstanding GPU timers to record metrics.
     CheckGpuTimers(RasterInterface());
   }
-  ResetSharedImageBacking();
-  if (context_provider_wrapper_) {
-    context_provider_wrapper_->RemoveObserver(this);
-  }
+  ResetSharedImagePool();
   if (sw_image_provider_context_provider_wrapper_) {
     sw_image_provider_context_provider_wrapper_->RemoveObserver(this);
-  }
-  if (raster_context_provider_) {
-    raster_context_provider_->RemoveObserver(this);
-  }
-  if (shared_image_interface_provider_) {
-    shared_image_interface_provider_->RemoveGpuChannelLostObserver(this);
   }
 }
 
@@ -226,48 +219,45 @@ const MemoryManagedPaintRecorder* BaseRenderingContext2D::Recorder() const {
   return recorder_.get();
 }
 
-bool BaseRenderingContext2D::HasSharedImageBacking() const {
-  return shared_image_provider_ != nullptr;
+bool BaseRenderingContext2D::HasSharedImagePool() const {
+  return image_pool_ != nullptr;
 }
 
 void BaseRenderingContext2D::SetResourceRecyclingEnabled(bool value) {
-  if (shared_image_provider_) {
-    shared_image_provider_->SetResourceRecyclingEnabled(value);
+  if (!image_pool_) {
+    return;
+  }
+  resource_recycling_enabled_ = value;
+  if (!resource_recycling_enabled_) {
+    ClearUnusedResources();
   }
 }
 
 bool BaseRenderingContext2D::IsSingleBuffered() const {
-  return shared_image_provider_ &&
-         shared_image_provider_->image_pool_->GetImageInfo().usage.Has(
-             gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE);
+  return image_pool_ && image_pool_->GetImageInfo().usage.Has(
+                            gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE);
 }
 
 int BaseRenderingContext2D::NumInflightResourcesForTesting() const {
-  return shared_image_provider_
-             ? shared_image_provider_->NumInflightResourcesForTesting()
-             : 0;
+  return num_inflight_resources_;
 }
 
 bool BaseRenderingContext2D::HasUnusedResourcesForTesting() const {
-  return shared_image_provider_ && shared_image_provider_->image_pool_ &&
-         shared_image_provider_->image_pool_->GetPoolSizeForTesting() > 0;
+  return image_pool_ && image_pool_->GetPoolSizeForTesting() > 0;
 }
 
 bool BaseRenderingContext2D::UnusedResourcesReclaimTimerIsRunningForTesting()
     const {
-  return shared_image_provider_ && shared_image_provider_->image_pool_
-             ? shared_image_provider_->image_pool_
-                   ->IsReclaimTimerRunningForTesting()
-             : false;
+  return image_pool_ && image_pool_->IsReclaimTimerRunningForTesting();
 }
 
 bool BaseRenderingContext2D::HasBacking() const {
-  return shared_image_provider_ != nullptr || surface_ != nullptr;
+  return image_pool_ != nullptr || surface_ != nullptr;
 }
 
 bool BaseRenderingContext2D::IsBackingValid() const {
-  if (shared_image_provider_) {
-    if (shared_image_provider_->image_pool_->GetImageInfo().is_software) {
+  if (image_pool_) {
+    if (image_pool_->GetImageInfo().is_software) {
       // Software compositing (which always uses software raster).
       return shared_image_interface_provider_ &&
              shared_image_interface_provider_->SharedImageInterface();
@@ -281,22 +271,57 @@ bool BaseRenderingContext2D::IsBackingAccelerated() const {
   return is_accelerated_;
 }
 
-void BaseRenderingContext2D::ResetSharedImageBacking() {
-  if (!shared_image_provider_) {
+void BaseRenderingContext2D::ResetSharedImagePool() {
+  if (!image_pool_) {
     return;
   }
-  shared_image_provider_.reset();
+  UMA_HISTOGRAM_EXACT_LINEAR("Blink.Canvas.MaximumInflightResources",
+                             max_inflight_resources_, 20);
+  resource_client_weak_ptr_factory_.InvalidateWeakPtrs();
+  image_pool_.reset();
   resource_.reset();
   is_accelerated_ = false;
+  resource_recycling_enabled_ = true;
+  num_inflight_resources_ = 0;
+  max_inflight_resources_ = 0;
+  must_preserve_content_on_copy_on_write_ = true;
+  current_resource_has_write_access_ = false;
+  is_cleared_ = false;
+  if (context_provider_wrapper_) {
+    context_provider_wrapper_->RemoveObserver(this);
+    context_provider_wrapper_.reset();
+  }
+  if (raster_context_provider_) {
+    raster_context_provider_->RemoveObserver(this);
+    raster_context_provider_.reset();
+  }
+  if (shared_image_interface_provider_) {
+    shared_image_interface_provider_->RemoveGpuChannelLostObserver(this);
+    shared_image_interface_provider_.reset();
+  }
+}
+
+void BaseRenderingContext2D::ClearUnusedResources() {
+  if (image_pool_) {
+    image_pool_->Clear();
+  }
+}
+
+void BaseRenderingContext2D::OnResourceRefReturned(
+    scoped_refptr<CanvasResourceSharedImage> resource) {
+  if (!resource->IsLost() && resource->HasOneRef() &&
+      resource_recycling_enabled_ && image_pool_) {
+    image_pool_->ReleaseImage(std::move(resource));
+  }
 }
 
 scoped_refptr<CanvasResourceSharedImage>
 BaseRenderingContext2D::NewOrRecycledResource() {
-  if (!shared_image_provider_) {
+  if (!image_pool_) {
     return nullptr;
   }
 
-  auto resource = shared_image_provider_->image_pool_->GetImage();
+  auto resource = image_pool_->GetImage();
   if (!resource) {
     return nullptr;
   }
@@ -304,20 +329,18 @@ BaseRenderingContext2D::NewOrRecycledResource() {
   CHECK(!IsSingleBuffered() || !resource->IsInitialized());
 
   if (!resource->IsInitialized()) {
-    if (shared_image_provider_->image_pool_->GetImageInfo().is_software) {
-      resource->InitializeSoftware(shared_image_provider_->CreateWeakPtr(),
-                                   shared_image_interface_provider_,
-                                   color_params_.GetGfxHdrMetadata());
+    if (image_pool_->GetImageInfo().is_software) {
+      resource->InitializeSoftware(
+          resource_client_weak_ptr_factory_.GetWeakPtr(),
+          shared_image_interface_provider_, color_params_.GetGfxHdrMetadata());
     } else {
-      resource->Initialize(shared_image_provider_->CreateWeakPtr(),
+      resource->Initialize(resource_client_weak_ptr_factory_.GetWeakPtr(),
                            context_provider_wrapper_,
                            color_params_.GetGfxHdrMetadata(), is_accelerated_);
     }
-    ++shared_image_provider_->num_inflight_resources_;
-    if (shared_image_provider_->num_inflight_resources_ >
-        shared_image_provider_->max_inflight_resources_) {
-      shared_image_provider_->max_inflight_resources_ =
-          shared_image_provider_->num_inflight_resources_;
+    ++num_inflight_resources_;
+    if (num_inflight_resources_ > max_inflight_resources_) {
+      max_inflight_resources_ = num_inflight_resources_;
     }
   }
   DCHECK(resource->HasOneRef());
@@ -328,34 +351,19 @@ void BaseRenderingContext2D::ResetBacking() {
   if (HasBacking()) {
     CanvasMemoryDumpProvider::Instance()->UnregisterClient(this);
   }
-  if (shared_image_provider_ && RasterInterface()) {
+  if (image_pool_ && RasterInterface()) {
     // Last chance for outstanding GPU timers to record metrics.
     CheckGpuTimers(RasterInterface());
   }
   ClearGpuTimers();
-  ResetSharedImageBacking();
+  ResetSharedImagePool();
   surface_.reset();
   canvas_image_provider_.reset();
   cached_snapshot_.reset();
   cached_content_id_ = cc::PaintImage::kInvalidContentId;
-  must_preserve_content_on_copy_on_write_ = true;
-  current_resource_has_write_access_ = false;
-  is_cleared_ = false;
-  if (context_provider_wrapper_) {
-    context_provider_wrapper_->RemoveObserver(this);
-    context_provider_wrapper_.reset();
-  }
   if (sw_image_provider_context_provider_wrapper_) {
     sw_image_provider_context_provider_wrapper_->RemoveObserver(this);
     sw_image_provider_context_provider_wrapper_.reset();
-  }
-  if (raster_context_provider_) {
-    raster_context_provider_->RemoveObserver(this);
-    raster_context_provider_.reset();
-  }
-  if (shared_image_interface_provider_) {
-    shared_image_interface_provider_->RemoveGpuChannelLostObserver(this);
-    shared_image_interface_provider_.reset();
   }
   notify_gpu_context_lost_task_.Cancel();
   notified_context_lost_ = false;
@@ -369,7 +377,7 @@ bool BaseRenderingContext2D::IsPaintable() const {
 }
 
 bool BaseRenderingContext2D::Is2DCanvasAccelerated() const {
-  if (shared_image_provider_) {
+  if (image_pool_) {
     return is_accelerated_;
   }
   if (surface_) {
@@ -385,7 +393,7 @@ base::ByteSize BaseRenderingContext2D::AllocatedBufferSize() const {
   base::ByteSize result;
   if (resource_) {
     result += resource_->GetSharedImage()->EstimatedSizeInBytes() *
-              shared_image_provider_->num_inflight_resources_;
+              num_inflight_resources_;
   }
   if (surface_) {
     result += base::ByteSize(
@@ -395,7 +403,7 @@ base::ByteSize BaseRenderingContext2D::AllocatedBufferSize() const {
   return result;
 }
 
-void BaseRenderingContext2D::CreateSharedImageProvider(
+void BaseRenderingContext2D::CreateSharedImagePool(
     RasterMode raster_mode,
     gpu::SharedImageUsageSet shared_image_usage_flags) {
   CHECK(!HasBacking());
@@ -407,7 +415,7 @@ void BaseRenderingContext2D::CreateSharedImageProvider(
       SharedGpuContext::ContextProviderWrapper();
 
   // If the context is lost we don't want to re-create it here, the resulting
-  // resource provider would be invalid anyway.
+  // SharedImage pool would be invalid anyway.
   if (!context_provider_wrapper ||
       !context_provider_wrapper->ContextProvider().RasterInterface() ||
       context_provider_wrapper->ContextProvider().IsContextLost()) {
@@ -545,12 +553,10 @@ void BaseRenderingContext2D::CreateSharedImageProvider(
   bool is_single_buffered = shared_image_usage_flags.Has(
       gpu::SHARED_IMAGE_USAGE_CONCURRENT_READ_WRITE);
 
-  auto image_pool = gpu::SharedImagePool<CanvasResourceSharedImage>::Create(
+  image_pool_ = gpu::SharedImagePool<CanvasResourceSharedImage>::Create(
       image_info, sii,
       is_accelerated_ ? "CanvasResourceRaster" : "CanvasResourceRasterGmb",
       is_single_buffered ? 0 : kMaxRecycledCanvasResources, expiration_time);
-  shared_image_provider_ =
-      std::make_unique<Canvas2DResourceProvider>(std::move(image_pool));
 
   resource_ = NewOrRecycledResource();
 
@@ -572,40 +578,19 @@ void BaseRenderingContext2D::CreateSharedImageProvider(
 
     // An error might have occurred while clearing.
     if (IsGpuContextLost()) {
-      ResetSharedImageBacking();
+      ResetSharedImagePool();
       canvas_image_provider_.reset();
-      must_preserve_content_on_copy_on_write_ = true;
-      current_resource_has_write_access_ = false;
-      is_cleared_ = false;
-      if (context_provider_wrapper_) {
-        context_provider_wrapper_->RemoveObserver(this);
-        context_provider_wrapper_.reset();
-      }
       return;
     }
   } else if (!resource_) {
-    ResetSharedImageBacking();
-    must_preserve_content_on_copy_on_write_ = true;
-    current_resource_has_write_access_ = false;
-    is_cleared_ = false;
-    if (context_provider_wrapper_) {
-      context_provider_wrapper_->RemoveObserver(this);
-      context_provider_wrapper_.reset();
-    }
+    ResetSharedImagePool();
     return;
   }
 
   if (raster_mode == RasterMode::kCPU) {
     CreateSoftwareSurface();
     if (!surface_) {
-      ResetSharedImageBacking();
-      must_preserve_content_on_copy_on_write_ = true;
-      current_resource_has_write_access_ = false;
-      is_cleared_ = false;
-      if (context_provider_wrapper_) {
-        context_provider_wrapper_->RemoveObserver(this);
-        context_provider_wrapper_.reset();
-      }
+      ResetSharedImagePool();
       return;
     }
   } else {
@@ -619,7 +604,7 @@ void BaseRenderingContext2D::CreateSharedImageProvider(
   }
 }
 
-void BaseRenderingContext2D::CreateSharedImageProviderForSoftwareCompositor() {
+void BaseRenderingContext2D::CreateSharedImagePoolForSoftwareCompositor() {
   CHECK(!HasBacking());
   CHECK(!SharedGpuContext::IsGpuCompositingEnabled());
 
@@ -641,16 +626,12 @@ void BaseRenderingContext2D::CreateSharedImageProviderForSoftwareCompositor() {
       color_params_.GetGfxColorSpace(), kTopLeft_GrSurfaceOrigin,
       color_params_.GetAlphaType(), /*buffer_usage=*/std::nullopt,
       /*is_software=*/true);
-  auto image_pool = gpu::SharedImagePool<CanvasResourceSharedImage>::Create(
+  image_pool_ = gpu::SharedImagePool<CanvasResourceSharedImage>::Create(
       image_info, sii, "CanvasResourceSharedImage",
       kMaxRecycledCanvasResources);
-  shared_image_provider_ =
-      std::make_unique<Canvas2DResourceProvider>(std::move(image_pool));
   CreateSoftwareSurface();
   if (!surface_) {
-    ResetSharedImageBacking();
-    must_preserve_content_on_copy_on_write_ = true;
-    is_cleared_ = false;
+    ResetSharedImagePool();
     return;
   }
 
@@ -667,7 +648,7 @@ void BaseRenderingContext2D::CreateSoftwareSurface() {
   const gfx::ColorSpace color_space = color_params_.GetGfxColorSpace();
   const auto info = SkImageInfo::Make(
       size.width(), size.height(), viz::ToClosestSkColorType(format),
-      shared_image_provider_ ? alpha_type : kPremul_SkAlphaType,
+      image_pool_ ? alpha_type : kPremul_SkAlphaType,
       color_space.ToSkColorSpace());
   const bool can_use_lcd_text = alpha_type == kOpaque_SkAlphaType;
   const auto props =
@@ -689,7 +670,7 @@ void BaseRenderingContext2D::RecordBackingHistograms() {
   CHECK(HasBacking());
   // Note: The histogram names date back to historical usage of
   // CanvasResourceProvider for both SharedImage and bitmap backings.
-  if (shared_image_provider_) {
+  if (image_pool_) {
     base::UmaHistogramBoolean("Blink.Canvas.ResourceProviderIsAccelerated",
                               is_accelerated_);
     base::UmaHistogramEnumeration("Blink.Canvas.ResourceProviderType",
@@ -707,14 +688,14 @@ void BaseRenderingContext2D::OnMemoryDump(
   // BaseRenderingContext2D is only registered with CanvasMemoryDumpProvider
   // while `HasBacking()` is true.
   CHECK(HasBacking());
-  if (shared_image_provider_) {
+  if (image_pool_) {
     std::string path = base::StringPrintf("canvas/ResourceProvider_0x%" PRIXPTR,
                                           reinterpret_cast<uintptr_t>(this));
     if (resource_) {
       resource_->OnMemoryDump(pmd, path);
     }
     std::string cached_path = path + "/cached";
-    shared_image_provider_->image_pool_->OnMemoryDump(pmd, cached_path);
+    image_pool_->OnMemoryDump(pmd, cached_path);
   }
   if (!surface_) {
     return;
@@ -749,17 +730,15 @@ size_t BaseRenderingContext2D::GetSize() const {
 }
 
 void BaseRenderingContext2D::OnContextDestroyed() {
-  if (shared_image_provider_) {
-    shared_image_provider_->ClearUnusedResources();
-  }
+  ClearUnusedResources();
   canvas_image_provider_ = nullptr;
 }
 
 void BaseRenderingContext2D::OnContextLost() {
-  if (!shared_image_provider_ || notified_context_lost_) {
+  if (!image_pool_ || notified_context_lost_) {
     return;
   }
-  shared_image_provider_->ClearUnusedResources();
+  ClearUnusedResources();
   notified_context_lost_ = true;
   // Notify the host that the GPU context was lost. The call is done in a
   // separate task, so that the host can reset the backing if needed.
@@ -793,9 +772,8 @@ CanvasImageProvider* BaseRenderingContext2D::GetOrCreateCanvasImageProvider() {
   }
 
   const viz::SharedImageFormat format =
-      is_accelerated_
-          ? shared_image_provider_->image_pool_->GetImageInfo().format
-          : color_params_.GetSharedImageFormat();
+      is_accelerated_ ? image_pool_->GetImageInfo().format
+                      : color_params_.GetSharedImageFormat();
 
   cc::ImageDecodeCache* cache_f16 = nullptr;
   cc::ImageDecodeCache* cache_rgba8 = nullptr;
@@ -890,9 +868,8 @@ void BaseRenderingContext2D::EnsureResourceReadyForDraw() {
   // Since the resource will be updated, the cached snapshot is no longer
   // valid. Note that it is important to release this reference here to not
   // trigger copy-on-write below from the resource ref in the snapshot.
-  // Note that this is valid for single buffered mode also, since while the
-  // resource/mailbox remains the same, the snapshot needs an updated sync
-  // token for these writes.
+  // In single-buffered mode, resetting `cached_snapshot_` ensures subsequent
+  // Snapshot() calls create a fresh copy reflecting the updated resource.
   cached_snapshot_.reset();
 
   if (ShouldReplaceTargetBuffer()) {
@@ -993,8 +970,7 @@ void BaseRenderingContext2D::RasterRecordToSharedImage(
 
 void BaseRenderingContext2D::RasterRecordToSoftwareSurface(
     cc::PaintRecord last_recording) {
-  if (shared_image_provider_ &&
-      !shared_image_provider_->image_pool_->GetImageInfo().is_software) {
+  if (image_pool_ && !image_pool_->GetImageInfo().is_software) {
     EnsureWriteAccess();
   }
   cc::SkiaPaintCanvas skia_canvas(surface_->getCanvas(),
@@ -1065,7 +1041,7 @@ scoped_refptr<StaticBitmapImage> BaseRenderingContext2D::Snapshot() {
       // the ref-count on the resource as a proxy for a read lock to allow
       // recycling the resource once all refs have been released.
       auto release_callback = blink::BindOnce(
-          [](scoped_refptr<CanvasResourceSharedImage>&& resource,
+          [](scoped_refptr<CanvasResourceSharedImage> resource,
              const gpu::SyncToken& sync_token, bool lost_resource) {
             CHECK(resource);
 
@@ -1089,17 +1065,28 @@ scoped_refptr<StaticBitmapImage> BaseRenderingContext2D::Snapshot() {
               resource_->owning_thread_task_runner_,
               std::move(release_callback));
 
-      // We'll record its content_id to be used by the FlushForImageListener.
-      // This will be needed in EnsureResourceReadyForDraw(), but we are doing
-      // it now, as we don't know if later on we will be in the same thread the
-      // cached_snapshot_ was created and we wouldn't be able to
-      // PaintImageForCurrentFrame in AcceleratedStaticBitmapImage just to check
-      // the content_id. ShouldReplaceTargetBuffer needs this ID in order to let
-      // other contexts know to flush to avoid unnecessary copy-on-writes.
-      if (cached_snapshot_) {
+      if (cached_snapshot_ && IsSingleBuffered()) {
+        // Single-buffered resources are mutated in place
+        // (`ShouldReplaceTargetBuffer()` returns false), so `Snapshot()` must
+        // clone into a dedicated image to preserve snapshot immutability and
+        // origin-clean isolation.
+        cached_snapshot_ = StaticBitmapImageTransform::Clone(cached_snapshot_);
+      } else if (cached_snapshot_) {
+        // We'll record its content_id to be used by the FlushForImageListener.
+        // This will be needed in EnsureResourceReadyForDraw(), but we are doing
+        // it now, as we don't know if later on we will be in the same thread
+        // the cached_snapshot_ was created and we wouldn't be able to
+        // PaintImageForCurrentFrame in AcceleratedStaticBitmapImage just to
+        // check the content_id. ShouldReplaceTargetBuffer needs this ID in
+        // order to let other contexts know to flush to avoid unnecessary
+        // copy-on-writes.
         cached_content_id_ =
             cached_snapshot_->PaintImageForCurrentFrame().GetContentIdForFrame(
                 0u);
+      }
+
+      if (!cached_snapshot_) {
+        return nullptr;
       }
     }
 
@@ -1151,8 +1138,7 @@ bool BaseRenderingContext2D::WritePixelsToBacking(const SkImageInfo& orig_info,
     return true;
   }
   if (surface_) {
-    if (shared_image_provider_ &&
-        !shared_image_provider_->image_pool_->GetImageInfo().is_software) {
+    if (image_pool_ && !image_pool_->GetImageInfo().is_software) {
       EnsureWriteAccess();
     }
     return surface_->getCanvas()->writePixels(orig_info, pixels, row_bytes, x,
@@ -1174,11 +1160,32 @@ BaseRenderingContext2D::PaintRenderingResultsToSnapshot(
 scoped_refptr<ExportedCanvasResource>
 BaseRenderingContext2D::CreateExportedResource(
     scoped_refptr<CanvasResourceSharedImage> resource) {
+  // Callbacks below never run on the different thread, but could be destroyed
+  // on different thread if current thread is gone (and so PostTask will fail) .
+  auto wait_sync_token =
+      ConvertToBaseRepeatingCallback(CrossThreadBindRepeating(
+          [](scoped_refptr<CanvasResourceSharedImage> resource,
+             gpu::SyncToken sync_token) {
+            resource->WaitSyncToken(sync_token);
+          },
+          resource));
+
+  auto release_callback = ConvertToBaseOnceCallback(CrossThreadBindOnce(
+      [](scoped_refptr<CanvasResourceSharedImage> resource,
+         const gpu::SyncToken& sync_token, bool is_lost) {
+        if (is_lost) {
+          resource->NotifyResourceLost();
+        }
+        CanvasResource::DropRefOnOwningThread(std::move(resource));
+      },
+      resource));
+
   auto exported_resource = base::MakeRefCounted<ExportedCanvasResource>(
-      resource, resource->GetSharedImage(), resource->sync_token(),
+      resource->GetSharedImage(), resource->sync_token(),
       viz::TransferableResource::ResourceSource::kCanvas,
       color_params_.GetGfxHdrMetadata(), context_provider_wrapper_,
-      is_accelerated_);
+      is_accelerated_, std::move(wait_sync_token), std::move(release_callback),
+      /*use_legacy_external_canvas_resource_bitmap_path=*/false);
   exported_resource->SetOriginClean(OriginClean());
   return exported_resource;
 }
@@ -1187,11 +1194,11 @@ scoped_refptr<ExportedCanvasResource>
 BaseRenderingContext2D::PaintRenderingResultsToResource(
     SourceDrawingBuffer source_buffer,
     FlushReason reason) {
-  if (!IsBackingValid() || !shared_image_provider_) {
+  if (!IsBackingValid() || !image_pool_) {
     return nullptr;
   }
   FlushCanvas(reason);
-  if (shared_image_provider_->image_pool_->GetImageInfo().is_software) {
+  if (image_pool_->GetImageInfo().is_software) {
     DCHECK(surface_);
     scoped_refptr<CanvasResourceSharedImage> output_resource =
         NewOrRecycledResource();
@@ -1245,7 +1252,7 @@ void BaseRenderingContext2D::ResetRecorder() {
 }
 
 bool BaseRenderingContext2D::IsGraphite() const {
-  return shared_image_provider_ && context_provider_wrapper_ &&
+  return image_pool_ && context_provider_wrapper_ &&
          context_provider_wrapper_->ContextProvider()
                  .GetGpuFeatureInfo()
                  .status_values[gpu::GPU_FEATURE_TYPE_SKIA_GRAPHITE] ==
@@ -1616,11 +1623,9 @@ ImageData* BaseRenderingContext2D::getImageDataInternal(
       return image_data;
     }
 
-    SkPixmap image_data_pixmap = image_data->GetSkPixmap();
     const bool read_pixels_successful =
         snapshot->PaintImageForCurrentFrame().readPixels(
-            image_data_pixmap.info(), image_data_pixmap.writable_addr(),
-            image_data_pixmap.rowBytes(), sx, sy);
+            image_data->GetSkPixmap(), sx, sy);
     if (!read_pixels_successful) {
       SkIRect bounds =
           snapshot->PaintImageForCurrentFrame().GetSkImageInfo().bounds();
@@ -1841,15 +1846,14 @@ void BaseRenderingContext2D::InitializeForRecording(
 
 void BaseRenderingContext2D::RecordingCleared() {
   clear_frame_ = true;
-  if (shared_image_provider_) {
+  if (image_pool_) {
     must_preserve_content_on_copy_on_write_ = false;
   }
 }
 
 void BaseRenderingContext2D::OnFlushForImage(
     cc::PaintImage::ContentId content_id) {
-  if (shared_image_provider_ &&
-      !shared_image_provider_->image_pool_->GetImageInfo().is_software) {
+  if (image_pool_ && !image_pool_->GetImageInfo().is_software) {
     if (Recorder()->getRecordingCanvas().IsCachingImage(content_id)) {
       FlushCanvas(FlushReason::kOther);
     }

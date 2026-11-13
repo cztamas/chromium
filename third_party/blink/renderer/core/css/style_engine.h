@@ -124,7 +124,7 @@ class OrderedScopeTree;
 using StyleContainmentScopeTree = OrderedScopeTree<LayoutQuote>;
 using ScrollTargetGroupScopeTree = OrderedScopeTree<HTMLAnchorElement>;
 
-enum InvalidationScope { kInvalidateCurrentScope, kInvalidateAllScopes };
+enum class InvalidationScope { kCurrentScope, kAllScopes };
 
 using StyleSheetKey = AtomicString;
 using UnorderedTreeScopeSet = HeapHashSet<Member<TreeScope>>;
@@ -556,14 +556,13 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
                                               Element& removed_element,
                                               Element& after_element);
   void ScheduleNthPseudoInvalidations(ContainerNode&);
-  void ApplyRuleSetInvalidationForTreeScope(
-      TreeScope&,
-      ContainerNode&,
-      SelectorFilter&,
-      StyleScopeFrame&,
-      const HeapHashSet<Member<RuleSet>>&,
-      unsigned changed_rule_flags,
-      InvalidationScope = kInvalidateCurrentScope);
+  void ApplyRuleSetInvalidationForTreeScope(TreeScope&,
+                                            ContainerNode&,
+                                            SelectorFilter&,
+                                            StyleScopeFrame&,
+                                            const HeapHashSet<Member<RuleSet>>&,
+                                            unsigned changed_rule_flags,
+                                            InvalidationScope);
   void ApplyRuleSetInvalidationForSubtree(
       TreeScope&,
       Element&,
@@ -586,6 +585,11 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
   void FlatTreePositionChanged(Node& node) {
     style_recalc_root_.FlatTreePositionChanged(node);
   }
+  void AddFlatTreeMovedNode(Node& node) {
+    flat_tree_moved_nodes_.insert(&node);
+  }
+  bool HasFlatTreeMovedNodes() const { return !flat_tree_moved_nodes_.empty(); }
+  void DetachDisplayLockedFlatTreeMovedNodesIfNeeded();
   void PseudoElementRemoved(Element& originating_element) {
     layout_tree_rebuild_root_.SubtreeModified(originating_element);
   }
@@ -1319,6 +1323,11 @@ class CORE_EXPORT StyleEngine final : public GarbageCollected<StyleEngine>,
 
   // URLPattern entries defined by @location rules.
   HeapHashMap<AtomicString, Member<URLPattern>> navigation_locations_;
+
+  // Nodes whose flat-tree parent changed while retaining style or layout state.
+  // Drained in DetachDisplayLockedFlatTreeMovedNodesIfNeeded() once slot
+  // assignments are clean.
+  HeapHashSet<WeakMember<Node>> flat_tree_moved_nodes_;
 };
 
 void PossiblyScheduleNthPseudoInvalidations(Node& node);

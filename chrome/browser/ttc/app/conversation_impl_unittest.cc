@@ -79,6 +79,11 @@ class FakeSessionController : public SessionController {
     last_request_.arguments = tool_request.arguments.Clone();
     std::move(tool_response).Run(ToolResponse::Success());
   }
+  void ProcessToolCallBatch(std::vector<PendingToolCall> tool_calls) override {
+    for (PendingToolCall& tool_call : tool_calls) {
+      ProcessToolCall(tool_call.request, std::move(tool_call.callback));
+    }
+  }
   std::vector<ToolDefinition> GetToolDefinitions() override {
     std::vector<ToolDefinition> tools;
     for (const ToolDefinition& tool : tools_) {
@@ -426,14 +431,25 @@ TEST_F(ConversationImplTest, CapturedAudioLevelReportedToSession) {
 TEST_F(ConversationImplTest, OnPlaybackCompletedReportsStatus) {
   ConversationImpl& conversation = CreateConversation();
   conversation.Start();
+  conversation.OnModelTurnStateUpdate(ModelTurnStateUpdate::kTurnStarted,
+                                      /*generation_id=*/42);
 
   base::RunLoop run_loop;
-  EXPECT_CALL(backend(), ReportPlaybackStatus(42)).WillOnce([&run_loop] {
-    run_loop.Quit();
-  });
+  EXPECT_CALL(backend(), ReportPlaybackStatus(testing::_,
+                                              /*playback_complete=*/false,
+                                              /*generation_id=*/42))
+      .Times(testing::AnyNumber());
+  // 100 frames at 24kHz is 4166.67 us, rounded up via ceil(100e6 / 24000) to
+  // 4167 us.
+  EXPECT_CALL(backend(), ReportPlaybackStatus(base::Microseconds(4167),
+                                              /*playback_complete=*/true,
+                                              /*generation_id=*/42))
+      .WillOnce([&run_loop] { run_loop.Quit(); });
 
   std::vector<int16_t> samples(100, 1000);
-  audio_controller().PlayAudio(samples, /*sequence_number=*/42);
+  audio_controller().PlayAudio(samples);
+  conversation.OnModelTurnStateUpdate(
+      ModelTurnStateUpdate::kGenerationCompleted, /*generation_id=*/42);
 
   auto bus = media::AudioBus::Create(1, 100);
   audio_controller().Render(base::TimeDelta(), base::TimeTicks::Now(), {},

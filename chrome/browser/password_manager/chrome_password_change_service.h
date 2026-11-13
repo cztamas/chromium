@@ -74,8 +74,7 @@ enum class PasswordChangeAvailability {
 
 class ChromePasswordChangeService
     : public KeyedService,
-      public password_manager::PasswordChangeServiceInterface,
-      public PasswordChangeDelegate::Observer {
+      public password_manager::PasswordChangeServiceInterface {
  public:
   // Callback which allows to open a new tab for password change. Useful for
   // testing UI interactions in browser tests.
@@ -128,27 +127,14 @@ class ChromePasswordChangeService
 
   // Add overridden change password URL.
   void AddChangePasswordUrlOverride(const GURL& url) override;
+  password_manager::PasswordChangeCredentialsProvider*
+  GetCredentialsProviderForActorSurface(int32_t actor_surface_id) override;
 
   // Checks if user has interacted with the feature and only then general
   // availability.
   bool UserIsActivePasswordChangeUser() const;
 
  private:
-#if !BUILDFLAG(IS_ANDROID)
-  struct PasswordChangeData {
-    std::unique_ptr<PasswordChangeDelegateImpl> delegate;
-    base::WeakPtr<content::WebContents> originator;
-    password_manager::LeakedPasswordDetails details;
-  };
-#endif  // !BUILDFLAG(IS_ANDROID)
-
-  // PasswordChangeDelegate::Observer impl.
-  void OnPasswordChangeStopped(PasswordChangeDelegate* delegate) override;
-  void OnPasswordChangeFinishedSuccessfully(
-      PasswordChangeDelegate* delegate) override;
-  void OnLoginCheckFailedWithServerError(
-      PasswordChangeDelegate* delegate) override;
-
   // KeyedService impl.
   void Shutdown() override;
 
@@ -161,10 +147,8 @@ class ChromePasswordChangeService
       const password_manager::PasswordForm& form,
       bool is_non_password_login_detected = false) const;
 
-  // Returns the entry in `password_change_data_` that owns `delegate`, or
-  // `password_change_data_.end()` if there is none.
-  std::vector<PasswordChangeData>::iterator FindPasswordChangeData(
-      PasswordChangeDelegate* delegate);
+  // Destroys `delegate` once its flow is stopped.
+  void OnPasswordChangeStopped(base::WeakPtr<PasswordChangeDelegate> delegate);
 #endif
 
   const raw_ptr<PrefService> pref_service_;
@@ -178,7 +162,8 @@ class ChromePasswordChangeService
   const raw_ptr<autofill::LogRouter> log_router_;
 
 #if !BUILDFLAG(IS_ANDROID)
-  std::vector<PasswordChangeData> password_change_data_;
+  std::vector<std::unique_ptr<PasswordChangeDelegateImpl>>
+      password_change_delegates_;
 
   std::vector<std::unique_ptr<PasswordChangeFromCheckupDelegate>>
       password_change_from_checkup_delegates_;

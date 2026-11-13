@@ -62,7 +62,6 @@ import org.chromium.chrome.browser.ActivityTabProvider;
 import org.chromium.chrome.browser.ActivityTabProvider.ActivityTabTabObserver;
 import org.chromium.chrome.browser.ChromeActivitySessionTracker;
 import org.chromium.chrome.browser.ChromeInactivityTracker;
-import org.chromium.chrome.browser.ChromeInactivityTracker.InactivityObserver;
 import org.chromium.chrome.browser.DeferredStartupHandler;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.SwipeRefreshHandler;
@@ -100,6 +99,7 @@ import org.chromium.chrome.browser.contextmenu.ChromeContextMenuPopulatorFactory
 import org.chromium.chrome.browser.contextual_tasks.ContextualTasksBridgeRegistrar;
 import org.chromium.chrome.browser.contextual_tasks.ContextualTasksUtils;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.customtabs.CustomTabLauncherImpl;
 import org.chromium.chrome.browser.data_sharing.DataSharingNotificationManager;
 import org.chromium.chrome.browser.data_sharing.DataSharingServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabGroupUtils;
@@ -131,9 +131,10 @@ import org.chromium.chrome.browser.glic.GlicMetrics;
 import org.chromium.chrome.browser.glic.GlicPrefNames;
 import org.chromium.chrome.browser.glic.GlicUtils;
 import org.chromium.chrome.browser.glic.settings.GlicNavigationUtils;
-import org.chromium.chrome.browser.glic.ui.GlicPromoCoordinator;
 import org.chromium.chrome.browser.glic.ui.GlicUiCoordinator;
+import org.chromium.chrome.browser.history.HistoryFeatures;
 import org.chromium.chrome.browser.history.HistoryManagerUtils;
+import org.chromium.chrome.browser.history.IncognitoHistoryDisclaimerCoordinator;
 import org.chromium.chrome.browser.hub.HubManager;
 import org.chromium.chrome.browser.incognito.reauth.IncognitoReauthCoordinatorFactory;
 import org.chromium.chrome.browser.incognito.reauth.IncognitoReauthManager;
@@ -189,7 +190,6 @@ import org.chromium.chrome.browser.reader_mode.ReaderModeIphController;
 import org.chromium.chrome.browser.safe_browsing.AdvancedProtectionCoordinator;
 import org.chromium.chrome.browser.search_engines.choice_screen.ChoiceDialogCoordinator;
 import org.chromium.chrome.browser.selection.ChromeSelectionDropdownMenuDelegate;
-import org.chromium.chrome.browser.settings.SettingsCustomTabLauncherImpl;
 import org.chromium.chrome.browser.share.ShareDelegate;
 import org.chromium.chrome.browser.share.link_to_text.LinkToTextIphController;
 import org.chromium.chrome.browser.share.send_tab_to_self.SendTabToSelfOmniboxIphController;
@@ -220,6 +220,7 @@ import org.chromium.chrome.browser.tab_ui.TabListFaviconProvider;
 import org.chromium.chrome.browser.tab_ui.TabListMode;
 import org.chromium.chrome.browser.tab_ui.TabSwitcher;
 import org.chromium.chrome.browser.tab_ui.TabSwitcherUtils;
+import org.chromium.chrome.browser.tab_ui.undo_tab_close_snackbar.UndoGroupSnackbarController;
 import org.chromium.chrome.browser.tabmodel.StubTabModel;
 import org.chromium.chrome.browser.tabmodel.TabClosureParams;
 import org.chromium.chrome.browser.tabmodel.TabCreatorManager;
@@ -235,12 +236,9 @@ import org.chromium.chrome.browser.tasks.tab_management.TabGroupListFaviconResol
 import org.chromium.chrome.browser.tasks.tab_management.TabSearchOverlayCoordinator;
 import org.chromium.chrome.browser.tasks.tab_management.TabSearchOverlayCoordinator.TabSearchEntryPoint;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiUtils;
-import org.chromium.chrome.browser.tasks.tab_management.UndoGroupSnackbarController;
 import org.chromium.chrome.browser.tasks.tab_management.vertical_tabs.VerticalTabListCoordinator;
 import org.chromium.chrome.browser.tasks.tab_management.vertical_tabs.VerticalTabsActionDelegate;
 import org.chromium.chrome.browser.tasks.tab_management.vertical_tabs.VerticalTabsSideUiCoordinator;
-import org.chromium.chrome.browser.tips.TipsOptInCoordinator;
-import org.chromium.chrome.browser.tips.TipsUtils;
 import org.chromium.chrome.browser.toolbar.ToolbarButtonInProductHelpController;
 import org.chromium.chrome.browser.toolbar.ToolbarFeatures;
 import org.chromium.chrome.browser.toolbar.ToolbarIntentMetadata;
@@ -417,13 +415,10 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
     private @Nullable AdvancedProtectionCoordinator mAdvancedProtectionCoordinator;
     private final KeyboardFocusRowManager mKeyboardFocusRowManager;
     private CharSequence mApplicationLabel;
-    private @Nullable TipsOptInCoordinator mTipsOptInCoordinator;
-    private @Nullable GlicPromoCoordinator mGlicPromoCoordinator;
+    private @Nullable ForegroundPromoController mForegroundPromoController;
     private @Nullable StartupEnterpriseSignalsDisclaimerController
             mEnterpriseSignalsDisclaimerController;
-    private boolean mPromosEvaluatedForCurrentForeground;
     private final OneshotSupplier<ChromeInactivityTracker> mInactivityTrackerSupplier;
-    private final InactivityObserver mInactivityObserver;
     private @Nullable CrossDeviceSettingImporter mCrossDeviceSettingImporter;
     private @Nullable SideUiCoordinator mSideUiCoordinator;
     private @Nullable WebContentHairlineCoordinator mWebContentHairlineCoordinator;
@@ -450,6 +445,7 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
     private @Nullable ActivityResultWithNativeObserver mInAppUpdateActivityResultObserver;
     private @Nullable PauseResumeWithNativeObserver mInAppUpdateResumeObserver;
     private boolean mInAppUpdateStartupCheckScheduled;
+    private @Nullable IncognitoHistoryDisclaimerCoordinator mIncognitoHistoryDisclaimerCoordinator;
 
     // Activity tab observer that updates the current tab used by various UI components.
     private class RootUiTabObserver extends ActivityTabTabObserver {
@@ -869,23 +865,14 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
                         urlBarVisibleSupplier,
                         () -> mVerticalTabsSideUiCoordinator);
 
-        mInactivityObserver =
-                new InactivityObserver() {
-                    @Override
-                    public void onForegrounded(long timeSinceLastBackgroundedMs) {
-                        // Reset the evaluation flag when the app is foregrounded, indicating a
-                        // new foreground session has started and promos should be re-evaluated.
-                        mPromosEvaluatedForCurrentForeground = false;
-                        maybeShowPromosOnForeground();
-                    }
-                };
-
-        mInactivityTrackerSupplier.onAvailable(
-                (inactivityTracker) -> {
-                    inactivityTracker.addObserver(mInactivityObserver);
-                });
-
-        maybeShowPromosOnForeground();
+        mForegroundPromoController =
+                new ForegroundPromoController(
+                        mActivity,
+                        mProfileSupplier,
+                        mInactivityTrackerSupplier,
+                        mTrackerInitializedOneshotSupplier,
+                        getBottomSheetControllerSupplier(),
+                        mSnackbarManagerSupplier);
 
         new OneShotCallback<>(mProfileSupplier, this::waitForTrackerInit);
 
@@ -1056,19 +1043,14 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
             mBookmarkBarIphController = null;
         }
 
-        if (mTipsOptInCoordinator != null) {
-            mTipsOptInCoordinator.destroy();
+        if (mForegroundPromoController != null) {
+            mForegroundPromoController.destroy();
+            mForegroundPromoController = null;
         }
-        if (mGlicPromoCoordinator != null) {
-            mGlicPromoCoordinator.destroy();
-        }
+
         if (mEnterpriseSignalsDisclaimerController != null) {
             mEnterpriseSignalsDisclaimerController.destroy();
             mEnterpriseSignalsDisclaimerController = null;
-        }
-
-        if (mInactivityTrackerSupplier.get() != null) {
-            mInactivityTrackerSupplier.get().removeObserver(mInactivityObserver);
         }
 
         if (mTabBottomSheetReadAloudControllerCallback != null) {
@@ -1129,6 +1111,10 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
         // The hairline observes SideUiCoordinator, so it must be destroyed first.
         destroyWebContentHairline();
         destroySideUi();
+        if (mIncognitoHistoryDisclaimerCoordinator != null) {
+            mIncognitoHistoryDisclaimerCoordinator.destroy();
+            mIncognitoHistoryDisclaimerCoordinator = null;
+        }
 
         super.onDestroy();
     }
@@ -1507,7 +1493,7 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
         boolean isGlicEnabledByFlags = GlicEnabling.isEnabledByFlags();
         if (isGlicEnabledByFlags) {
             GlicNavigationUtils.setLauncher(SigninAndHistorySyncActivityLauncherImpl::get);
-            GlicNavigationUtils.setCustomTabLauncher(SettingsCustomTabLauncherImpl::new);
+            GlicNavigationUtils.setCustomTabLauncher(CustomTabLauncherImpl::new);
         }
 
         initializeTabBottomSheetManagers();
@@ -1688,6 +1674,7 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
                                     mWindowAndroid),
                             AiOverlayDialogBridge::new);
         }
+        maybeInitIncognitoHistoryDisclaimerCoordinator();
     }
 
     /** Creates an instance of {@link IncognitoReauthCoordinatorFactory} for tabbed activity. */
@@ -1971,60 +1958,6 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
         }
     }
 
-    // TODO(crbug.com/515566274): Move foreground promos coordination logic to its own class to
-    // facilitate testing and reduce TabbedRootUiCoordinator's complexity.
-    private void maybeShowPromosOnForeground() {
-        mTrackerInitializedOneshotSupplier.onAvailable(
-                mCallbackController.makeCancelable(
-                        (initialized) -> {
-                            if (!initialized) {
-                                return;
-                            }
-                            if (mInactivityTrackerSupplier.get() == null) {
-                                return;
-                            }
-                            if (mPromosEvaluatedForCurrentForeground) {
-                                return;
-                            }
-                            mPromosEvaluatedForCurrentForeground = true;
-
-                            if (maybeShowGlicPromo()) {
-                                return;
-                            }
-
-                            long timeSinceLastBackgroundedMs =
-                                    mInactivityTrackerSupplier
-                                            .get()
-                                            .getTimeSinceLastBackgroundedMs();
-                            maybeShowTipsOptInPromo(timeSinceLastBackgroundedMs);
-                        }));
-    }
-
-    private void maybeShowTipsOptInPromo(long timeSinceLastBackgroundedMs) {
-        var bottomSheetController = getBottomSheetController();
-        assert bottomSheetController != null;
-        TipsUtils.maybeShowTipsOptInPromo(
-                mActivity,
-                mProfileSupplier.get(),
-                bottomSheetController,
-                mSnackbarManagerSupplier.asNonNull().get(),
-                ChromeSharedPreferences.getInstance(),
-                timeSinceLastBackgroundedMs,
-                (coordinator) -> mTipsOptInCoordinator = coordinator);
-    }
-
-    @VisibleForTesting
-    boolean maybeShowGlicPromo() {
-        var bottomSheetController = getBottomSheetController();
-        if (bottomSheetController == null) {
-            return false;
-        }
-        mGlicPromoCoordinator =
-                GlicPromoCoordinator.maybeShowPromo(
-                        mActivity, mProfileSupplier.get(), bottomSheetController);
-        return mGlicPromoCoordinator != null;
-    }
-
     private void updateTopControlsHeight() {
         updateTopControlsHeight(/* allowAnimations= */ true);
     }
@@ -2053,6 +1986,16 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
                         }),
                 mTabModelSelectorSupplier,
                 mProfileSupplier);
+    }
+
+    @VisibleForTesting
+    void maybeInitIncognitoHistoryDisclaimerCoordinator() {
+        if (!HistoryFeatures.isAndroidDesktopWebUiHistoryEnabled()) return;
+        mIncognitoHistoryDisclaimerCoordinator =
+                new IncognitoHistoryDisclaimerCoordinator(
+                        mActivity,
+                        mWindowAndroid,
+                        new int[] {R.id.incognito_indicator, R.id.menu_button_wrapper});
     }
 
     private void initInAppUpdateObservers() {
@@ -2275,7 +2218,8 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
      */
     public void initializeCoBrowseViewFactory() {
         if (TabBottomSheetUtils.isTabBottomSheetEnabled()
-                || GlicUtils.isSidePanelFormFactor(mActivity)) {
+                || GlicUtils.isSidePanelFormFactor(mActivity)
+                || ContextualTasksUtils.isContextualTasksUiEnabled()) {
             ContextMenuPopulatorFactory contextMenuPopulatorFactory =
                     new ChromeContextMenuPopulatorFactory(
                             /* itemDelegate= */ null,
@@ -3623,10 +3567,6 @@ public class TabbedRootUiCoordinator extends RootUiCoordinator {
                 mVerticalTabsSideUiCoordinator != null
                         && mVerticalTabsSideUiCoordinator.canActivateTabLayoutToggleMenu()
                         && !VerticalTabUtils.isTabLayoutSwitchingInProgress();
-    }
-
-    @Nullable GlicPromoCoordinator getGlicPromoCoordinatorForTesting() {
-        return mGlicPromoCoordinator;
     }
 
     /** Returns the {@link TabSearchOverlayCoordinator} for testing. */

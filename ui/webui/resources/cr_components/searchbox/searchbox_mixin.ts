@@ -31,6 +31,9 @@ export enum ControlKeyState {
   DOWN_AND_CONSUMED,
 }
 
+const MODIFIER_KEYS =
+    ['Alt', 'AltGraph', 'CapsLock', 'Control', 'Meta', 'Shift'];
+
 type Constructor<T> = new (...args: any[]) => T;
 
 export const SearchboxMixin = <T extends Constructor<CrLitElement>>(
@@ -679,8 +682,11 @@ export const SearchboxMixin = <T extends Constructor<CrLitElement>>(
       // pending results the navigation is waiting for, causing the navigation
       // to never occur. But this is a hack; comparing `e.key !=== 'Enter'` is
       // only a semi-accurate heuristic for whether a navigation is about to
-      // occur.
-      if (e.key !== 'Enter') {
+      // occur. Pressing a modifier key by itself (e.g. the 'Shift' of
+      // 'Shift+Enter') doesn't change the input, so it doesn't freeze the
+      // results either; otherwise, fast modified-Enter navigations would use
+      // stale results.
+      if (e.key !== 'Enter' && !MODIFIER_KEYS.includes(e.key)) {
         this.activeQueryId = -1;
       }
       this.compositionCommitQueryId_ = null;
@@ -964,26 +970,28 @@ export const SearchboxMixin = <T extends Constructor<CrLitElement>>(
       }
 
       const isPureCtrlEnter = this.shouldAppendDotComOnCtrlEnter() &&
-          e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey &&
+          !this.inKeywordMode && e.ctrlKey && !e.shiftKey && !e.altKey &&
+          !e.metaKey &&
           this.controlKeyState !== ControlKeyState.DOWN_AND_CONSUMED;
 
       e.preventDefault();
       if (this.handleVirtualFocusEnter(e)) {
         return;
       }
-      // If no new query's `results` are pending (though new async results for
-      // the current query may be pending), navigate. Otherwise, the user
-      // pressed enter after sending a new query that hasn't returned any
-      // results yet. Wait for the 1st results of the new query before
-      // navigating.
-      if (this.activeQueryId === -1 ||
-          this.result?.queryId === this.activeQueryId) {
+      const resultsPending = this.activeQueryId !== -1 &&
+          this.result?.queryId !== this.activeQueryId;
+      if (isPureCtrlEnter) {
+        // Ctrl+Enter adds 'www.' and '.com' to the previewed match or the
+        // input, but not to the default match. If new results are pending, the
+        // preview is stale, so use the input.
+        const usePreview = !resultsPending &&
+            this.isMatchPreview_(this.selectedMatch, this.matchIndex);
+        this.openCtrlEnterMatch(usePreview ? this.matchIndex : -1);
+      } else if (!resultsPending) {
+        // If no new query's `results` are pending (though new async results for
+        // the current query may be pending), navigate.
         if (this.selectedMatch) {
-          if (isPureCtrlEnter) {
-            this.openCtrlEnterMatch(this.matchIndex);
-          } else {
-            this.navigateToMatch(this.matchIndex, e);
-          }
+          this.navigateToMatch(this.matchIndex, e);
         }
       } else {
         // User typed and pressed 'Enter' too quickly. Ignore this for now

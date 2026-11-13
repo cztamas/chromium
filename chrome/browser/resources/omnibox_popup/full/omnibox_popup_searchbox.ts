@@ -29,7 +29,7 @@ import {CrLitElement} from '//resources/lit/v3_0/lit.rollup.js';
 import {SelectionLineState} from '//resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
 import type {AutocompleteMatch, AutocompleteResult, OmniboxPopupSelection, PageCallbackRouter as SearchboxPageCallbackRouter, PageHandlerInterface as SearchboxPageHandlerInterface, SelectionDirection, SelectionStep, UrlEmphasis} from '//resources/mojo/components/omnibox/browser/searchbox.mojom-webui.js';
 import type {Url} from '//resources/mojo/url/mojom/url.mojom-webui.js';
-import {browserProxyFactory, MatchesUpdate, OmniboxEscapeAction} from 'chrome://omnibox-popup.top-chrome/shared/omnibox_popup.mojom-webui.js';
+import {browserProxyFactory, MatchesUpdate, OmniboxEscapeAction, PlaceholderType} from 'chrome://omnibox-popup.top-chrome/shared/omnibox_popup.mojom-webui.js';
 import type {OmniboxInputState, PageCallbackRouter as PopupPageCallbackRouter, PageHandlerInterface as PopupPageHandlerInterface} from 'chrome://omnibox-popup.top-chrome/shared/omnibox_popup.mojom-webui.js';
 import type {OmniboxPopupContextualEntrypointElement} from 'chrome://omnibox-popup.top-chrome/shared/omnibox_popup_contextual_entrypoint.js';
 import type {OmniboxPopupContextualEntrypointButtonElement} from 'chrome://omnibox-popup.top-chrome/shared/omnibox_popup_contextual_entrypoint_button.js';
@@ -133,6 +133,19 @@ export class OmniboxPopupSearchboxElement extends
         reflect: true,
       },
       searchboxIcon_: {type: String},
+      /**
+       * The default search engine placeholder text, e.g. "Ask Google or type a
+       * URL", which the Views omnibox shows while it is empty and blurred.
+       */
+      dsePlaceholderText_: {type: String},
+      /**
+       * Whether the AIM button has DOM focus, e.g. after tabbing to it from the
+       * empty input. The input shows `dsePlaceholderText_` only then, like the
+       * Views omnibox does when the AIM button takes focus. Otherwise the
+       * placeholder stays empty, so it doesn't flicker on tab switches
+       * (b/504669677).
+       */
+      aimButtonFocused_: {type: Boolean},
       searchboxVoiceSearchEnabled_: {
         type: Boolean,
         reflect: true,
@@ -256,6 +269,8 @@ export class OmniboxPopupSearchboxElement extends
       loadTimeData.getBoolean('omniboxDogfoodFeedbackEnabled');
   protected accessor searchboxIcon_: string =
       loadTimeData.getString('searchboxDefaultIcon');
+  protected accessor dsePlaceholderText_: string = '';
+  protected accessor aimButtonFocused_: boolean = false;
   protected accessor searchboxVoiceSearchEnabled_: boolean =
       loadTimeData.getBoolean('searchboxVoiceSearch');
   protected accessor searchboxLensSearchEnabled_: boolean =
@@ -467,8 +482,11 @@ export class OmniboxPopupSearchboxElement extends
       this.popupCallbackRouter_.clearPopup.addListener(
           this.onClearPopup_.bind(this)),
       this.popupCallbackRouter_.setDefaultSearchProvider.addListener(
-          (defaultIconPath: string) => {
+          (defaultIconPath: string, placeholderType: PlaceholderType,
+           searchEngineName: string) => {
             this.searchboxIcon_ = defaultIconPath;
+            this.dsePlaceholderText_ = this.computeDsePlaceholderText_(
+                placeholderType, searchEngineName);
           }),
     ];
     this.eventTracker_.add(
@@ -1079,6 +1097,10 @@ export class OmniboxPopupSearchboxElement extends
       // select omnibox text, & query ZPS if no user input in progress.
       e.preventDefault();
       e.stopPropagation();
+      // This returns before `super.onInputWrapperKeydown()` freezes the
+      // results, so freeze them here too. Otherwise, pending results would
+      // replace the selection below.
+      this.activeQueryId = -1;
       if (this.keywordModeManager.isInKeywordMode) {
         this.keywordModeManager.clearKeyword(
             this.getInputElement().inputElement.value);
@@ -1135,11 +1157,35 @@ export class OmniboxPopupSearchboxElement extends
       const input = this.getInputElement().inputElement;
       if (input.selectionStart === 0 &&
           input.selectionEnd === input.value.length) {
+        const elidedText = input.value;
+        const wasFullUrlShown = this.fullUrlShown_;
         this.showFullUrlOnDeselect_();
-        if (e.key === 'ArrowLeft' || e.key === 'Home') {
-          input.setSelectionRange(0, 0);
+        const toStart = e.key === 'ArrowLeft' || e.key === 'Home';
+        let caret = toStart ? 0 : input.value.length;
+        // Leave keys with modifiers (e.g. Alt+Left to go back) as they were.
+        const hasModifier = e.altKey || e.ctrlKey || e.metaKey;
+        // Like `OmniboxViewViews`, ArrowLeft puts the caret at the start of
+        // the elided URL within the unelided one, e.g. after "https://www.",
+        // while Home puts it at the very start.
+        if (e.key === 'ArrowLeft' && !hasModifier && !wasFullUrlShown &&
+            this.fullUrlShown_) {
+          caret = Math.max(0, this.getElidedPrefixLength_(elidedText));
+          // Don't let the key's default action move the caret any further,
+          // e.g. to before the last "." of "https://www.".
+          e.preventDefault();
+        }
+        input.setSelectionRange(caret, caret);
+        // Blink doesn't scroll a text field for `setSelectionRange()`, so
+        // scroll the caret into view.
+        if (this.multiLineEnabled) {
+          input.scrollTop = toStart ? 0 : input.scrollHeight;
+        } else if (toStart) {
+          input.scrollLeft = 0;
         } else {
-          input.setSelectionRange(input.value.length, input.value.length);
+          // An RTL input (e.g. for an Arabic query) scrolls towards its end
+          // with negative offsets, which are clamped like positive ones.
+          const isRtl = getComputedStyle(input).direction === 'rtl';
+          input.scrollLeft = isRtl ? -input.scrollWidth : input.scrollWidth;
         }
       }
     }
@@ -1321,14 +1367,8 @@ export class OmniboxPopupSearchboxElement extends
     }
 
     // Find the length of the prefix that was chopped off to form the elided
-    // URL. This only works because only prefixes are elided from the full URL.
-    let offset = this.fullUrl_.indexOf(elidedText);
-    // Some intranet URLs have an elided form that's not a substring of the full
-    // URL, e.g. "https://foobar" has the elided form "foobar/". In this case,
-    // chop off the trailing slash and search again.
-    if (offset === -1 && elidedText.endsWith('/')) {
-      offset = this.fullUrl_.indexOf(elidedText.slice(0, -1));
-    }
+    // URL.
+    const offset = this.getElidedPrefixLength_(elidedText);
     if (offset === -1) {
       return;
     }
@@ -1345,6 +1385,23 @@ export class OmniboxPopupSearchboxElement extends
     // offset, but scroll as little as needed to show the caret.
     this.scrollOffsetIntoView_(
         direction === 'backward' ? start : end, scrollLeft);
+  }
+
+  /**
+   * Returns the length of the prefix (e.g. "https://www.") that was chopped
+   * off `fullUrl_` to form `elidedText`, or -1 if `elidedText` isn't an elided
+   * form of `fullUrl_`.
+   */
+  private getElidedPrefixLength_(elidedText: string): number {
+    // This only works because only prefixes are elided from the full URL.
+    let offset = this.fullUrl_.indexOf(elidedText);
+    // Some intranet URLs have an elided form that's not a substring of the full
+    // URL, e.g. "https://foobar" has the elided form "foobar/". In this case,
+    // chop off the trailing slash and search again.
+    if (offset === -1 && elidedText.endsWith('/')) {
+      offset = this.fullUrl_.indexOf(elidedText.slice(0, -1));
+    }
+    return offset;
   }
 
   private isChromeScheme_(): boolean {
@@ -1701,6 +1758,10 @@ export class OmniboxPopupSearchboxElement extends
     this.lastSelectedMatch_ = null;
     this.$.input.setInputText('');
     this.getInputElement().blur();
+    // Hiding the popup leaves DOM focus on the AIM button without firing
+    // `focusout`, so reset its focus state, or a reshown popup would show the
+    // placeholder.
+    this.aimButtonFocused_ = false;
     this.clearAutocompleteMatches();
     await this.updateComplete;
   }
@@ -1861,6 +1922,31 @@ export class OmniboxPopupSearchboxElement extends
 
   protected onInputFocusin_() {
     this.searchboxPageHandler_.onFocusChanged(true);
+  }
+
+  protected onComposeButtonFocusin_() {
+    this.aimButtonFocused_ = true;
+  }
+
+  protected onComposeButtonFocusout_() {
+    this.aimButtonFocused_ = false;
+  }
+
+  protected computeInputPlaceholderText_(): string {
+    return this.aimButtonFocused_ ? this.dsePlaceholderText_ : '';
+  }
+
+  private computeDsePlaceholderText_(
+      placeholderType: PlaceholderType, searchEngineName: string): string {
+    switch (placeholderType) {
+      case PlaceholderType.kSearchOrTypeUrl:
+        return this.i18n('omniboxSearchOrTypeUrlPlaceholder', searchEngineName);
+      case PlaceholderType.kAskOrTypeUrl:
+        return this.i18n('omniboxAskOrTypeUrlPlaceholder', searchEngineName);
+      case PlaceholderType.kNone:
+      default:
+        return '';
+    }
   }
 
   /**
@@ -2165,7 +2251,8 @@ export class OmniboxPopupSearchboxElement extends
       // On an open page where no suggestion match is highlighted, submit the
       // verbatim input text (or reload the permanent URL).
       e.preventDefault();
-      if (e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey &&
+      if (!this.inKeywordMode && e.ctrlKey && !e.shiftKey && !e.altKey &&
+          !e.metaKey &&
           this.controlKeyState !== ControlKeyState.DOWN_AND_CONSUMED) {
         this.openCtrlEnterMatch(-1);
       } else {

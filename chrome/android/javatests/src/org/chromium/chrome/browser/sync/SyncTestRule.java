@@ -18,6 +18,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Pair;
 
 import androidx.annotation.Nullable;
 import androidx.preference.TwoStatePreference;
@@ -35,11 +36,13 @@ import org.chromium.base.test.util.CriteriaHelper;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.autofill.AutofillTestHelper;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.CreditCard;
+import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
 import org.chromium.chrome.browser.profiles.ProfileManager;
 import org.chromium.chrome.test.ChromeTabbedActivityTestRule;
 import org.chromium.chrome.test.batch.BlankCTATabInitialStateRule;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
+import org.chromium.components.feature_engagement.TestTracker;
 import org.chromium.components.prefs.PrefService;
 import org.chromium.components.signin.base.AccountInfo;
 import org.chromium.components.signin.base.CoreAccountInfo;
@@ -168,6 +171,16 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
 
         @Override
         public Promise<PendingIntent> createOptInIntent(CoreAccountInfo accountInfo) {
+            return Promise.rejected();
+        }
+
+        @Override
+        public Promise<Boolean> canEnroll(CoreAccountInfo accountInfo) {
+            return Promise.fulfilled(false);
+        }
+
+        @Override
+        public Promise<Pair<byte[], Integer>> enroll(CoreAccountInfo accountInfo) {
             return Promise.rejected();
         }
 
@@ -300,7 +313,16 @@ public class SyncTestRule extends ChromeTabbedActivityTestRule {
         // Start the activity by opening about:blank. This URL is ideal because it is not synced as
         // a typed URL. If another URL is used, it could interfere with test data.
         final Statement blankCTATabStatement = mBlankCTATabRule.apply(superStatement, desc);
-        return mSigninTestRule.apply(blankCTATabStatement, desc);
+        return mSigninTestRule.apply(
+                new Statement() {
+                    @Override
+                    public void evaluate() throws Throwable {
+                        // ChromeActivityTestRule disables IPH only after the activity starts.
+                        TrackerFactory.setTrackerForTests(new TestTracker());
+                        blankCTATabStatement.evaluate();
+                    }
+                },
+                desc);
     }
 
     @Override

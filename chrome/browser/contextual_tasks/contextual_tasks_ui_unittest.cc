@@ -15,12 +15,14 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/test_future.h"
 #include "base/uuid.h"
+#include "build/build_config.h"
 #include "chrome/browser/autocomplete/aim_eligibility_service_factory.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_cookie_synchronizer.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_eligibility_manager.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_internals.mojom.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_permission_controller.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_service_factory.h"
+#include "chrome/browser/contextual_tasks/contextual_tasks_test_utils.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_toolbar.mojom.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_ui_base.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_ui_post_rearchitecture.h"
@@ -427,6 +429,7 @@ class ContextualTasksUiTest : public ChromeRenderViewHostTestHarness {
 
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
+    SKIP_IF_CONTEXTUAL_TASKS_UNSUPPORTED();
 
     testing_profile_manager_ = std::make_unique<TestingProfileManager>(
         TestingBrowserProcess::GetGlobal());
@@ -499,6 +502,11 @@ class ContextualTasksUiTest : public ChromeRenderViewHostTestHarness {
   }
 
   void TearDown() override {
+    if (IsSkipped()) {
+      // SetUp() skipped the test after setting up the harness.
+      ChromeRenderViewHostTestHarness::TearDown();
+      return;
+    }
     embedded_web_contents_ = nullptr;
     service_for_nav_ = nullptr;
     contextual_tasks_service_ = nullptr;
@@ -5489,6 +5497,9 @@ TEST_F(ContextualTasksUiTest, ProfileIndicator_LoadTimeDataPopulated) {
 }
 
 TEST_F(ContextualTasksUiTest, ProfileIndicator_IncognitoSignedOutInitially) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      kContextualTasksSidePanelRearchitecture};
+
   // Even if the parent regular profile is signed in to Chrome and the web,
   // an Incognito profile with no Gaia cookies should not show the indicator.
   AccountInfo account_info = identity_test_env()->MakePrimaryAccountAvailable(
@@ -5529,6 +5540,9 @@ TEST_F(ContextualTasksUiTest, ProfileIndicator_IncognitoSignedOutInitially) {
 
 TEST_F(ContextualTasksUiTest,
        ProfileIndicator_IncognitoWebSignedInAndCookieChange) {
+  base::test::ScopedFeatureList scoped_feature_list{
+      kContextualTasksSidePanelRearchitecture};
+
   const std::string list_accounts_url =
       GaiaUrls::GetInstance()
           ->ListAccountsURLWithSource(

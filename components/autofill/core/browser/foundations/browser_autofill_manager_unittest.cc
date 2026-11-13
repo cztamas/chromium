@@ -573,7 +573,11 @@ class MockCreditCardAccessManager : public CreditCardAccessManager {
 class MockPaymentsAutofillClient : public payments::TestPaymentsAutofillClient {
  public:
   explicit MockPaymentsAutofillClient(AutofillClient* client)
-      : payments::TestPaymentsAutofillClient(client) {}
+      : payments::TestPaymentsAutofillClient(client) {
+    ON_CALL(*this, GetIbanManager).WillByDefault([this] {
+      return payments::TestPaymentsAutofillClient::GetIbanManager();
+    });
+  }
   ~MockPaymentsAutofillClient() override = default;
 
   MOCK_METHOD(bool, HasCreditCardScanFeature, (), (const, override));
@@ -581,6 +585,7 @@ class MockPaymentsAutofillClient : public payments::TestPaymentsAutofillClient {
               OnCardDataAvailable,
               (const FilledCardInformationBubbleOptions&, const url::Origin&),
               (override));
+  MOCK_METHOD(MockIbanManager*, GetIbanManager, (), (override));
 };
 
 class MockAutofillClient : public TestAutofillClient {
@@ -1747,6 +1752,25 @@ TEST_P(BrowserAutofillManagerTrustedVaultTest,
   EXPECT_THAT(
       external_delegate()->suggestions(),
       Contains(Suggestion(SuggestionType::kPendingStateTrustedVaultError)));
+}
+
+// Tests that passkey and Trusted Vault footer merges are skipped when
+// `trigger_source` does not include `FillingProduct::kPasskey` or
+// `FillingProduct::kPassword`, both when `kAutofillNewSuggestionGeneration` is
+// enabled and disabled.
+TEST_P(BrowserAutofillManagerTrustedVaultTest,
+       PasskeyAndTrustedVaultSkippedForUnrelatedTriggerSource) {
+  FormData form = CreateTestHybridSignUpFormData();
+  FormsSeen({form});
+
+  EXPECT_CALL(password_delegate(), GetWebauthnInlineQrCodeSuggestion).Times(0);
+  EXPECT_CALL(password_delegate(), GetWebauthnSignInWithAnotherDeviceSuggestion)
+      .Times(0);
+  EXPECT_CALL(password_delegate(), GetTrustedVaultUnlockSuggestion).Times(0);
+
+  OnAskForValuesToFill(
+      form, form.fields()[0],
+      AutofillSuggestionTriggerSource::kTextareaFocusedWithoutClick);
 }
 
 TEST_F(BrowserAutofillManagerTest,
@@ -7532,6 +7556,59 @@ TEST_F(BrowserAutofillManagerOtpSuggestionsTest,
   external_delegate()->CheckNoSuggestions(form.fields()[0].global_id());
 }
 
+// Parameterized on whether `kAutofillNewSuggestionGeneration` is enabled.
+class BrowserAutofillManagerOtpTypedValueTest
+    : public BrowserAutofillManagerOtpSuggestionsTest,
+      public WithParamInterface<bool> {
+ public:
+  BrowserAutofillManagerOtpTypedValueTest() {
+    feature_list_.InitWithFeatureState(
+        features::kAutofillNewSuggestionGeneration, GetParam());
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+// Tests that OTP suggestions are matched against the value that the user types
+// into the OTP field: An OTP that completes the typed value is offered, while
+// an OTP that contradicts it is not.
+TEST_P(BrowserAutofillManagerOtpTypedValueTest,
+       OtpSuggestionsAreMatchedAgainstTypedValue) {
+  FormData form = CreateAndSeeOtpForm();
+  ON_CALL(otp_manager(), GetOtpSuggestions)
+      .WillByDefault(base::test::RunOnceCallbackRepeatedly<2>(
+          std::vector<one_time_tokens::OneTimeToken>{
+              one_time_tokens::OneTimeToken(
+                  one_time_tokens::OneTimeTokenType::kSmsOtp, "083203",
+                  base::TimeTicks::Now())}));
+  ON_CALL(autocomplete_history_manager(), OnGetSingleFieldSuggestions)
+      .WillByDefault(
+          [](const FormData& form, const FormStructure* form_structure,
+             const FormFieldData& field, const AutofillField* autofill_field,
+             const AutofillClient& client,
+             SingleFieldFillRouter::OnSuggestionsReturnedCallback
+                 on_suggestions_returned) {
+            std::move(on_suggestions_returned).Run(field.global_id(), {});
+          });
+
+  test_api(form).field(0).set_value(u"08");
+  OnAskForValuesToFill(form, form.fields()[0],
+                       AutofillSuggestionTriggerSource::kTextFieldValueChanged);
+  EXPECT_THAT(external_delegate()->suggestions(),
+              ElementsAre(EqualsSuggestion(
+                  SuggestionType::kOneTimePasswordEntry, u"083203")));
+
+  test_api(form).field(0).set_value(u"12");
+  OnAskForValuesToFill(form, form.fields()[0],
+                       AutofillSuggestionTriggerSource::kTextFieldValueChanged);
+  external_delegate()->CheckNoSuggestions(form.fields()[0].global_id());
+}
+
+INSTANTIATE_TEST_SUITE_P(,
+                         BrowserAutofillManagerOtpTypedValueTest,
+                         testing::Bool());
+
 // Tests that triggering suggestions with `kGmailOneTimePasswordAvailable`
 // queries the `OtpManager` and returns OTP suggestions.
 TEST_F(BrowserAutofillManagerOtpSuggestionsTest,
@@ -8541,6 +8618,70 @@ TEST_F(BrowserAutofillManagerTest,
                   FillingProduct::kOneTimePassword, expected_survey_data));
 
   FormSubmitted(response_data);
+}
+
+class BrowserAutofillManagerIbanSuggestionGenerationTest
+    : public BrowserAutofillManagerTest,
+      public testing::WithParamInterface<bool> {
+ public:
+  BrowserAutofillManagerIbanSuggestionGenerationTest() {
+    feature_list_.InitWithFeatureState(
+        features::kAutofillNewSuggestionGeneration, GetParam());
+  }
+
+ private:
+  base::test::ScopedFeatureList feature_list_;
+};
+
+INSTANTIATE_TEST_SUITE_P(All,
+                         BrowserAutofillManagerIbanSuggestionGenerationTest,
+                         testing::Bool());
+
+// Tests that IBAN suggestions are only generated when the client provides
+// `IbanManager`, and that unsupported clients (such as iOS) do not generate
+// IBAN suggestions even when server IBANs are synced.
+TEST_P(BrowserAutofillManagerIbanSuggestionGenerationTest,
+       DoesNotGenerateIbanSuggestionsWithoutIbanManager) {
+  personal_data().test_payments_data_manager().AddServerIban(
+      test::GetServerIban());
+  ON_CALL(iban_manager(), OnGetSingleFieldSuggestions)
+      .WillByDefault(
+          [this](const FormStructure& form, const FormFieldData& field,
+                 const AutofillField& autofill_field, AutofillClient& client,
+                 SingleFieldFillRouter::OnSuggestionsReturnedCallback&
+                     on_suggestions_returned) {
+            return iban_manager().IbanManager::OnGetSingleFieldSuggestions(
+                form, field, autofill_field, client, on_suggestions_returned);
+          });
+  ON_CALL(autocomplete_history_manager(), OnGetSingleFieldSuggestions)
+      .WillByDefault(
+          [](const FormData& form, const FormStructure* form_structure,
+             const FormFieldData& field, const AutofillField* autofill_field,
+             const AutofillClient& client,
+             SingleFieldFillRouter::OnSuggestionsReturnedCallback
+                 on_suggestions_returned) {
+            std::move(on_suggestions_returned).Run(field.global_id(), {});
+          });
+
+  FormData form = CreateTestIbanFormData(/*value=*/"");
+  FormsSeen({form});
+
+  auto& mock_payments_client =
+      static_cast<MockPaymentsAutofillClient&>(payments_autofill_client());
+
+  // When `IbanManager` is present, IBAN suggestions are generated.
+  OnAskForValuesToFill(form, form.fields()[0]);
+  EXPECT_THAT(external_delegate()->suggestions(),
+              Contains(Field(&Suggestion::type, SuggestionType::kIbanEntry)));
+
+  // When `IbanManager` is null (e.g. on iOS), IBAN suggestions are not
+  // generated and blocklist metrics are not logged.
+  base::HistogramTester histogram_tester;
+  ON_CALL(mock_payments_client, GetIbanManager).WillByDefault(Return(nullptr));
+  OnAskForValuesToFill(form, form.fields()[0]);
+  EXPECT_THAT(external_delegate()->suggestions(), IsEmpty());
+  histogram_tester.ExpectTotalCount("Autofill.Iban.SuggestionsBlockListStatus",
+                                    0);
 }
 
 }  // namespace

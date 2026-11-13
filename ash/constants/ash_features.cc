@@ -522,9 +522,6 @@ BASE_FEATURE(kEnableOAuthIpp, base::FEATURE_DISABLED_BY_DEFAULT);
 // Enables RFC8925 (prefer IPv6-only on an IPv6-only-capable network).
 BASE_FEATURE(kEnableRFC8925, base::FEATURE_ENABLED_BY_DEFAULT);
 
-// Enable the DNS proxy service running in root network namespace for ChromeOS.
-BASE_FEATURE(kEnableRootNsDnsProxy, base::FEATURE_ENABLED_BY_DEFAULT);
-
 // If enabled, touchscreen mapping experience is visible in settings.
 BASE_FEATURE(kEnableTouchscreenMappingExperience,
              base::FEATURE_ENABLED_BY_DEFAULT);
@@ -1552,10 +1549,13 @@ BASE_FEATURE(kTilingWindowResize, base::FEATURE_DISABLED_BY_DEFAULT);
 // Use the Android staging SM-DS server when fetching pending eSIM profiles.
 BASE_FEATURE(kUseAndroidStagingSmds, base::FEATURE_DISABLED_BY_DEFAULT);
 
-// This feature toggles which dhcpcd version is used for IPv4 provisioning.
-// If it is enabled, dhcpcd10 will be used, otherwise the legacy dhcpcd7 will be
-// used. Note that IPv6 (DHCPv6-PD) always uses dhcpcd10.
-BASE_FEATURE(kUseDHCPCD10, base::FEATURE_ENABLED_BY_DEFAULT);
+// Use direct XKB layout for Thai Kedmanee input method.
+BASE_FEATURE(kUseDirectXkbLayoutForThaiKedmaneeInputMethod,
+             base::FEATURE_DISABLED_BY_DEFAULT);
+
+// Use direct XKB layout for Thai TIS 820-2531 input method.
+BASE_FEATURE(kUseDirectXkbLayoutForThaiTisInputMethod,
+             base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Use the AnnotatedAccountId for mapping between User and BrowserContext
 // (a.k.a. browser's Profile).

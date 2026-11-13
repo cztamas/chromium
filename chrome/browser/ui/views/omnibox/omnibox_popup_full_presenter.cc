@@ -19,7 +19,6 @@
 #include "build/build_config.h"
 #include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/location_bar/location_bar.h"
-#include "chrome/browser/ui/omnibox/ai_mode_page_action_controller.h"
 #include "chrome/browser/ui/omnibox/omnibox_controller.h"
 #include "chrome/browser/ui/omnibox/omnibox_edit_model.h"
 #include "chrome/browser/ui/omnibox/omnibox_next_features.h"
@@ -37,6 +36,7 @@
 #include "chrome/browser/ui/views/omnibox/omnibox_full_popup_webui_content.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_base.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_presenter_delegate.h"
+#include "chrome/browser/ui/views/omnibox/omnibox_popup_view_full_webui.h"
 #include "chrome/browser/ui/views/omnibox/omnibox_popup_webui_base_content.h"
 #include "chrome/browser/ui/views/omnibox/rounded_omnibox_results_frame.h"
 #include "chrome/browser/ui/views/tab_contents/chrome_web_contents_view_focus_helper.h"
@@ -45,7 +45,6 @@
 #include "chrome/browser/ui/views/toolbar/app_menu_control.h"
 #include "chrome/browser/ui/webui/omnibox_popup/omnibox_popup_handler.h"
 #include "chrome/browser/ui/webui/omnibox_popup/omnibox_popup_ui.h"
-#include "chrome/browser/ui/webui/searchbox/webui_omnibox_handler.h"
 #include "chrome/browser/ui/webui/top_chrome/webui_contents_preload_manager.h"
 #include "chrome/browser/ui/webui/top_chrome/webui_contents_wrapper.h"
 #include "components/permissions/permission_request_manager.h"
@@ -117,18 +116,7 @@ void OmniboxPopupFullPresenter::Show() {
     }
   }
 
-  auto* controller =
-      GetWebUIContent()->contents_wrapper()->GetWebUIController();
-  if (auto* handler = controller ? controller->omnibox_handler() : nullptr) {
-    // Compute visibility from the omnibox state rather than reading the Views
-    // AIM chip. During a tab change, `Show()` runs before the location bar's
-    // page action container is rebound to the new tab, so the chip still
-    // reflects the deactivated previous tab and would report hidden, briefly
-    // hiding the AIM button on new tab creation.
-    handler->SetAimButtonVisible(
-        omnibox::AiModePageActionController::ShouldShowPageAction(
-            location_bar()->GetProfile(), *location_bar()));
-  }
+  GetWebUIContent()->UpdateAimButtonVisibility();
 
   views::Widget* browser_widget = GetBrowserWidget();
   if (browser_widget && !browser_widget_observation_.IsObserving()) {
@@ -323,6 +311,10 @@ void OmniboxPopupFullPresenter::RequestFocus() {
 
 std::string_view OmniboxPopupFullPresenter::GetPopupMetricPrefix() const {
   return OmniboxPopupPresenterBase::kFullWebUIPopupMetricPrefix;
+}
+
+void OmniboxPopupFullPresenter::DeactivateAndKillFocus() {
+  DeactivatePopupAndKillFocus(FocusAfterBlur::kNone);
 }
 
 std::unique_ptr<RoundedOmniboxResultsFrame>
@@ -1049,75 +1041,35 @@ void OmniboxPopupFullPresenter::DeactivatePopupAndKillFocus(
   pending_focus_task_.Cancel();
   refocus_on_activation_ = false;
   ResetPermissionPromptShowingState();
-  OmniboxEditModel* edit_model = controller()->edit_model();
+  OmniboxPopupViewFullWebUI::BlurOmnibox(*controller(), [&] {
+    if (auto* focus_manager = GetBrowserFocusManager()) {
+          views::View* restore_view =
+              delegate().GetLocationBarFocusRestoreView();
+          views::View* stored_view = focus_manager->GetStoredFocusView();
+          if (stored_view == restore_view) {
+            focus_manager->SetStoredFocusView(nullptr);
+          }
+          switch (focus_after_blur) {
+            case FocusAfterBlur::kWebContents:
+              focus_manager->ClearFocus();
+              break;
+            case FocusAfterBlur::kNone:
+              // Another window, such as a bubble, took activation. Only clear
+              // Views focus here as `ClearFocus()` also clears native focus,
+              // which on Windows calls `::SetFocus()` on the browser HWND and
+              // reactivates it, stealing activation back from that window.
+              focus_manager->SetFocusedView(nullptr);
+              break;
+            case FocusAfterBlur::kCurrent:
+              // Another view took focus. Leave it there.
+              break;
+          }
+        }
 
-  // Keyword mode is an uncommitted draft even when the user text is empty,
-  // e.g. on the NTP after entering keyword mode via the keyword chip. Blurring
-  // should never exit keyword mode (see `OmniboxViewViews::OnBlur()`), so
-  // neither revert nor close the popup in that case.
-  const bool is_keyword_selected = edit_model->is_keyword_selected();
-
-  // If the view is showing text that's not user-text, revert the text to the
-  // permanent display text. This usually occurs if Steady State Elisions is on
-  // and the user has unelided, but not edited the URL.
-  // Also revert if the text has been edited but currently exactly matches
-  // the permanent text. An example of this scenario is someone typing on the
-  // new tab page and then deleting everything using backspace/delete.
-  //
-  // This should never exit keyword mode.
-  if (!is_keyword_selected &&
-      ((!edit_model->user_input_in_progress() &&
-        edit_model->user_text() != edit_model->GetPermanentDisplayText()) ||
-       (edit_model->user_input_in_progress() &&
-        (edit_model->user_text() == edit_model->GetPermanentDisplayText() ||
-         edit_model->user_text() ==
-             controller()->client()->GetFormattedFullURL())))) {
-    edit_model->Revert();
-  }
-
-  if (auto* popup_view = location_bar()->GetOmniboxPopupView()) {
-    popup_view->OnBlur();
-  }
-
-  if (auto* focus_manager = GetBrowserFocusManager()) {
-    views::View* restore_view = delegate().GetLocationBarFocusRestoreView();
-    views::View* stored_view = focus_manager->GetStoredFocusView();
-    if (stored_view == restore_view) {
-      focus_manager->SetStoredFocusView(nullptr);
-    }
-    switch (focus_after_blur) {
-      case FocusAfterBlur::kWebContents:
-        focus_manager->ClearFocus();
-        break;
-      case FocusAfterBlur::kNone:
-        // Another window, such as a bubble, took activation. Only clear Views
-        // focus here as `ClearFocus()` also clears native focus, which on
-        // Windows calls `::SetFocus()` on the browser HWND and reactivates it,
-        // stealing activation back from that window.
-        focus_manager->SetFocusedView(nullptr);
-        break;
-      case FocusAfterBlur::kCurrent:
-        // Another view took focus. Leave it there.
-        break;
-    }
-  }
-
-  if (focus_after_blur == FocusAfterBlur::kWebContents) {
-    controller()->client()->FocusWebContents();
-  }
-  edit_model->OnKillFocus();
-
-  // Close the popup unless the user has an uncommitted draft. Keyword mode
-  // counts as a draft even if the user text is empty.
-  // NOTE: Query values directly from edit model, as they are not guaranteed to
-  // remain consistent after calling `Revert()` or `OnKillFocus()`.
-  if (!edit_model->HasDraft()) {
-    if (controller()->popup_state_manager()->popup_state() ==
-        OmniboxPopupState::kFull) {
-      controller()->popup_state_manager()->SetPopupState(
-          OmniboxPopupState::kNone);
-    }
-  }
+        if (focus_after_blur == FocusAfterBlur::kWebContents) {
+          controller()->client()->FocusWebContents();
+        }
+      });
 }
 
 void OmniboxPopupFullPresenter::OnWidgetPresentedChanged(bool presented) {
@@ -1191,10 +1143,16 @@ void OmniboxPopupFullPresenter::OnEvent(const ui::Event& event) {
     return;
   }
 
-  // Right-clicks (context menu triggers) should never clear focus.
-  if (event.IsMouseEvent() && event.AsMouseEvent()->IsRightMouseButton()) {
+  const bool is_right_click =
+      event.IsMouseEvent() && event.AsMouseEvent()->IsRightMouseButton();
+
+#if !defined(USE_AURA)
+  // Right-clicks (context menu triggers) don't clear focus. On Aura they blur
+  // the omnibox like other clicks on the page; see the end of this method.
+  if (is_right_click) {
     return;
   }
+#endif  // !defined(USE_AURA)
 
   views::Widget* browser_widget = GetBrowserWidget();
   if (!browser_widget) {
@@ -1267,6 +1225,11 @@ void OmniboxPopupFullPresenter::OnEvent(const ui::Event& event) {
   }
 
   if (contains_top_container) {
+    // Right-clicks on top chrome open its context menus, e.g. the omnibox's
+    // own, which hands focus to the popup, so they leave the omnibox alone.
+    if (is_right_click) {
+      return;
+    }
     // Clear autocomplete matches and reset `activeQueryId_` on WebUI only if
     // click is outside of the popup and in the top container while popup is
     // shown.
@@ -1280,6 +1243,14 @@ void OmniboxPopupFullPresenter::OnEvent(const ui::Event& event) {
     return;
   }
 
+  // A click on the page blurs the omnibox. On Aura this includes right-clicks,
+  // as with the Views omnibox, since the window system moves focus to the page
+  // on any mouse press. Blurring also cancels any pending focus request, which
+  // a right-click would otherwise make when it activates the browser window
+  // (restoring the location bar as its stored focus view). That request would
+  // reactivate the popup before the asynchronously shown page context menu
+  // opens, and the menu would then be cancelled as soon as a click on it
+  // reactivated the browser window (b/580819291).
   DeactivatePopupAndKillFocus(FocusAfterBlur::kWebContents);
 }
 

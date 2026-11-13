@@ -99,6 +99,8 @@
 #endif
 
 #if BUILDFLAG(IS_MAC)
+#include <sys/stat.h>
+
 #include "chrome/updater/test/integration_tests_mac.h"
 #include "chrome/updater/util/mac_util.h"
 #endif
@@ -112,14 +114,18 @@
 #include "base/win/scoped_bstr.h"
 #include "base/win/security_util.h"
 #include "base/win/sid.h"
+#include "base/win/windows_version.h"
 #include "chrome/updater/app/server/win/updater_idl.h"
 #include "chrome/updater/app/server/win/updater_internal_idl.h"
 #include "chrome/updater/app/server/win/updater_legacy_idl.h"
+#include "chrome/updater/ipc/ipc_names.h"
+#include "chrome/updater/ipc/update_service_internal_proxy_mojo.h"
 #include "chrome/updater/util/win_util.h"
 #include "chrome/updater/win/setup/setup_util.h"
 #include "chrome/updater/win/ui/l10n_util.h"
 #include "chrome/updater/win/ui/resources/updater_installer_strings.h"
 #include "chrome/updater/win/win_constants.h"
+#include "mojo/public/cpp/platform/named_platform_channel.h"
 #endif  // BUILDFLAG(IS_WIN)
 
 namespace updater::test {
@@ -377,6 +383,17 @@ void ExpectReportsActiveUpdateCheck(ScopedServer& test_server) {
       R"("updatecheck":{"status":"noupdate"}},{"appid":"test2",)"
       R"("status":"ok","updatecheck":{"status":"noupdate"}}]})");
 }
+
+#if BUILDFLAG(IS_MAC)
+// Returns the inode of the wake plist, which changes if setup rewrites it.
+ino_t GetWakePlistInode() {
+  const std::optional<base::FilePath> path =
+      GetWakeTaskPlistPath(GetUpdaterScopeForTesting());
+  struct stat info = {};
+  EXPECT_TRUE(path && !stat(path->value().c_str(), &info)) << path;
+  return info.st_ino;
+}
+#endif  // BUILDFLAG(IS_MAC)
 
 }  // namespace
 
@@ -861,6 +878,10 @@ class IntegrationTest : public ::testing::Test {
   void ExpectPrepareToRunBundleSuccess(const base::FilePath& bundle_path) {
     test_commands_->ExpectPrepareToRunBundleSuccess(bundle_path);
   }
+
+  void QuarantineWakePlist() { test_commands_->QuarantineWakePlist(); }
+
+  void ExpectWakeJobLoaded() { test_commands_->ExpectWakeJobLoaded(); }
 
   void ExpectKSAdminFetchTag(bool elevate,
                              const std::string& product_id,
@@ -1660,6 +1681,47 @@ TEST_F(IntegrationTest, CheckForUpdateAndInstallAppViaMojo) {
             loop.Quit();
           }));
       loop.Run();
+    }
+  }
+
+  ASSERT_TRUE(WaitForUpdaterExit());
+  {
+    const UpdaterScope scope = GetUpdaterScopeForTesting();
+    std::optional<mojo::NamedPlatformChannel> legacy_pipe_squatter;
+    if (IsSystemInstall(scope) &&
+        base::win::GetVersion() >= base::win::Version::WIN10_RS3) {
+      // Occupy `kDefault` with a deny-all DACL so `Hello()` can succeed only if
+      // the server listens on and the dialer selects `kAdminProtected` without
+      // falling back.
+      mojo::NamedPlatformChannel::Options options;
+      options.server_name = GetUpdateServiceInternalServerName(scope);
+      options.pipe_name_type =
+          mojo::NamedPlatformChannel::PipeNameType::kDefault;
+      options.security_descriptor = L"D:(D;;GA;;;WD)";
+      legacy_pipe_squatter.emplace(options);
+      ASSERT_TRUE(legacy_pipe_squatter->server_endpoint().is_valid());
+    }
+
+    auto update_service_internal =
+        base::MakeRefCounted<UpdateServiceInternalProxyMojoImpl>(scope);
+    base::RunLoop loop;
+    update_service_internal->Hello(
+        base::BindLambdaForTesting([&](std::optional<RpcError> error) {
+          EXPECT_EQ(error, std::nullopt);
+          loop.Quit();
+        }));
+    loop.Run();
+
+    if (legacy_pipe_squatter) {
+      // Release the squatter while `update_service_internal` still holds the
+      // server alive, and verify the server did not open the legacy pipe.
+      legacy_pipe_squatter.reset();
+      const std::wstring legacy_pipe_name =
+          mojo::NamedPlatformChannel::GetPipeNameFromServerName(
+              GetUpdateServiceInternalServerName(scope),
+              mojo::NamedPlatformChannel::PipeNameType::kDefault);
+      EXPECT_FALSE(::WaitNamedPipeW(legacy_pipe_name.c_str(), 1));
+      EXPECT_EQ(::GetLastError(), DWORD{ERROR_FILE_NOT_FOUND});
     }
   }
 
@@ -4236,6 +4298,48 @@ TEST_F(IntegrationTest, SmokeTestPrepareToRunBundle) {
   ASSERT_TRUE(updater_path);
   ASSERT_NO_FATAL_FAILURE(ExpectPrepareToRunBundleSuccess(*updater_path));
 
+  ASSERT_NO_FATAL_FAILURE(Uninstall());
+}
+
+// Setup leaves an unchanged wake plist alone when a broken updater is
+// reinstalled at the same version: rewriting the plist can notify the user.
+TEST_F(IntegrationTest, OverinstallBrokenKeepsWakePlist) {
+  ASSERT_NO_FATAL_FAILURE(Install());
+  ASSERT_TRUE(WaitForUpdaterExit());
+  const ino_t inode = GetWakePlistInode();
+  ASSERT_NO_FATAL_FAILURE(DeleteActiveUpdaterExecutable());
+
+  ASSERT_NO_FATAL_FAILURE(Install());
+  ASSERT_TRUE(WaitForUpdaterExit());
+  EXPECT_EQ(GetWakePlistInode(), inode);
+  ASSERT_NO_FATAL_FAILURE(ExpectWakeJobLoaded());
+  ASSERT_NO_FATAL_FAILURE(Uninstall());
+}
+
+// launchd on macOS 27+ drops a quarantined wake plist at login. Setup must
+// rewrite and reload such a plist, even if its contents are unchanged.
+TEST_F(IntegrationTest, OverinstallBrokenRepairsQuarantinedWakePlist) {
+  ASSERT_NO_FATAL_FAILURE(Install());
+  ASSERT_TRUE(WaitForUpdaterExit());
+  ASSERT_NO_FATAL_FAILURE(QuarantineWakePlist());
+  ASSERT_NO_FATAL_FAILURE(DeleteActiveUpdaterExecutable());
+
+  ASSERT_NO_FATAL_FAILURE(Install());
+  ASSERT_TRUE(WaitForUpdaterExit());
+  ASSERT_NO_FATAL_FAILURE(ExpectWakeJobLoaded());
+  ASSERT_NO_FATAL_FAILURE(Uninstall());
+}
+
+// An updater launched by the browser inherits file quarantine, so the wake
+// plist it writes is quarantined. Setup must still get the wake job loaded.
+TEST_F(IntegrationTest, InstallWithInheritedQuarantine) {
+  if (IsSystemInstall(GetUpdaterScopeForTesting())) {
+    GTEST_SKIP() << "The browser installs only the user updater.";
+  }
+  ASSERT_NO_FATAL_FAILURE(InstallFromQuarantineEnabledApp());
+  ASSERT_TRUE(WaitForUpdaterExit());
+  ASSERT_NO_FATAL_FAILURE(ExpectInstalled());
+  ASSERT_NO_FATAL_FAILURE(ExpectWakeJobLoaded());
   ASSERT_NO_FATAL_FAILURE(Uninstall());
 }
 

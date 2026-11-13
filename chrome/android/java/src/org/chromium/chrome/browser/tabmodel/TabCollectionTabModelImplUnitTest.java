@@ -13,7 +13,6 @@ import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -72,6 +71,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -136,28 +136,24 @@ public class TabCollectionTabModelImplUnitTest {
                 .thenAnswer(inv -> JniUniquePtr.createForTesting(TAB_MODEL_JNI_BRIDGE_PTR));
 
         TabCollectionTabModelImplJni.setInstanceForTesting(mTabCollectionTabModelImplJni);
-        when(mTabCollectionTabModelImplJni.init(eq(mProfile)))
-                .thenReturn(TAB_COLLECTION_TAB_MODEL_IMPL_PTR);
+        when(mTabCollectionTabModelImplJni.init(any()))
+                .thenAnswer(
+                        inv -> JniUniquePtr.createForTesting(TAB_COLLECTION_TAB_MODEL_IMPL_PTR));
 
         mTabs = new ArrayList<>();
         mExpectNoJniCalls = false;
 
-        when(mTabCollectionTabModelImplJni.getAllTabs(eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR)))
+        when(mTabCollectionTabModelImplJni.getAllTabs(any()))
                 .thenAnswer(
                         invocation -> {
                             if (mExpectNoJniCalls) {
                                 org.junit.Assert.fail("JNI getAllTabs called when not expected");
                             }
-                            return mTabs;
+                            return new ArrayList<>(mTabs);
                         });
 
         when(mTabCollectionTabModelImplJni.addTabRecursive(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR),
-                        any(Tab.class),
-                        anyInt(),
-                        any(),
-                        anyBoolean(),
-                        anyBoolean()))
+                        any(), any(Tab.class), anyInt(), any(), anyBoolean(), anyBoolean()))
                 .thenAnswer(
                         invocation -> {
                             Tab tab = invocation.getArgument(1);
@@ -173,14 +169,10 @@ public class TabCollectionTabModelImplUnitTest {
                             return null;
                         })
                 .when(mTabCollectionTabModelImplJni)
-                .removeTabRecursive(eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR), any(Tab.class));
+                .removeTabRecursive(any(), any(Tab.class));
 
         when(mTabCollectionTabModelImplJni.moveTabRecursive(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR),
-                        anyInt(),
-                        anyInt(),
-                        any(),
-                        anyBoolean()))
+                        any(), anyInt(), anyInt(), any(), anyBoolean()))
                 .thenAnswer(
                         invocation -> {
                             int oldIndex = invocation.getArgument(1);
@@ -193,8 +185,7 @@ public class TabCollectionTabModelImplUnitTest {
                             return newIndex;
                         });
 
-        when(mTabCollectionTabModelImplJni.getTabsInGroup(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR), any()))
+        when(mTabCollectionTabModelImplJni.getTabsInGroup(any(), any()))
                 .thenAnswer(
                         invocation -> {
                             Token groupId = invocation.getArgument(1);
@@ -208,8 +199,7 @@ public class TabCollectionTabModelImplUnitTest {
                             return result;
                         });
 
-        when(mTabCollectionTabModelImplJni.getTabCountForGroup(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR), any()))
+        when(mTabCollectionTabModelImplJni.getTabCountForGroup(any(), any()))
                 .thenAnswer(
                         invocation -> {
                             Token groupId = invocation.getArgument(1);
@@ -223,8 +213,7 @@ public class TabCollectionTabModelImplUnitTest {
                             return count;
                         });
 
-        when(mTabCollectionTabModelImplJni.moveTabGroupTo(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR), any(), anyInt()))
+        when(mTabCollectionTabModelImplJni.moveTabGroupTo(any(), any(), anyInt()))
                 .thenAnswer(
                         invocation -> {
                             Token groupId = invocation.getArgument(1);
@@ -269,7 +258,6 @@ public class TabCollectionTabModelImplUnitTest {
     public void tearDown() {
         MediaCaptureDevicesDispatcherAndroidJni.setInstanceForTesting(null);
         mTabModel.destroy();
-        verify(mTabCollectionTabModelImplJni).destroy(eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR));
     }
 
     @Test
@@ -402,11 +390,11 @@ public class TabCollectionTabModelImplUnitTest {
         assertEquals(groupColor, TabGroupVisualDataStore.getTabGroupColor(tabGroupId));
         verify(mTabCollectionTabModelImplJni)
                 .createTabGroup(
-                        TAB_COLLECTION_TAB_MODEL_IMPL_PTR,
-                        tabGroupId,
-                        groupTitle,
-                        groupColor,
-                        /* isCollapsed= */ false);
+                        any(),
+                        eq(tabGroupId),
+                        eq(groupTitle),
+                        eq(groupColor),
+                        /* isCollapsed= */ eq(false));
         verifyBatchedAndReset();
     }
 
@@ -418,7 +406,7 @@ public class TabCollectionTabModelImplUnitTest {
         mTabs.add(createMockTab(4, mProfile));
         mTabs.add(createMockTab(5, mProfile));
         assertEquals("Incorrect tab count", 5, mTabModel.getCount());
-        verify(mTabCollectionTabModelImplJni).getAllTabs(eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR));
+        verify(mTabCollectionTabModelImplJni).getAllTabs(any());
     }
 
     @Test
@@ -438,7 +426,7 @@ public class TabCollectionTabModelImplUnitTest {
         mTabs.add(createMockTab(2, mProfile));
         mTabs.add(tab);
         assertEquals("Incorrect tab index", 2, mTabModel.indexOf(tab));
-        verify(mTabCollectionTabModelImplJni).getAllTabs(eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR));
+        verify(mTabCollectionTabModelImplJni).getAllTabs(any());
     }
 
     @Test
@@ -457,7 +445,7 @@ public class TabCollectionTabModelImplUnitTest {
                 "Index of null tab should be invalid",
                 TabList.INVALID_TAB_INDEX,
                 mTabModel.indexOf(null));
-        verify(mTabCollectionTabModelImplJni, never()).getAllTabs(anyLong());
+        verify(mTabCollectionTabModelImplJni, never()).getAllTabs(any());
     }
 
     @Test
@@ -519,9 +507,7 @@ public class TabCollectionTabModelImplUnitTest {
         tab3.setTabGroupId(groupId);
         mTabs.addAll(List.of(tab0, tab1, tab2, tab3, tab4, tab5));
 
-        when(mTabCollectionTabModelImplJni.tabGroupExists(
-                        TAB_COLLECTION_TAB_MODEL_IMPL_PTR, groupId))
-                .thenReturn(true);
+        when(mTabCollectionTabModelImplJni.tabGroupExists(any(), eq(groupId))).thenReturn(true);
 
         // Merging into a non-existent group should no-op.
         mTabModel.mergeListOfTabsToExistingGroup(
@@ -562,6 +548,7 @@ public class TabCollectionTabModelImplUnitTest {
         model.setIndex(0, TabSelectionCause.FROM_USER);
         verify(mTabModelDelegate).selectModel(/* incognito= */ false);
         verifyBatchedAndReset();
+        model.destroy();
 
         // Simulate an incognito Profile.
         doReturn(true).when(mProfile).isOffTheRecord();
@@ -574,6 +561,7 @@ public class TabCollectionTabModelImplUnitTest {
         incognitoModel.setIndex(0, TabSelectionCause.FROM_USER);
         verify(mTabModelDelegate).selectModel(/* incognito= */ true);
         verifyBatchedAndReset();
+        incognitoModel.destroy();
 
         // Simulate an ephemeral profile.
         doReturn(true).when(mProfile).isOffTheRecord();
@@ -586,6 +574,7 @@ public class TabCollectionTabModelImplUnitTest {
         ephemeralModel.setIndex(0, TabSelectionCause.FROM_USER);
         verify(mTabModelDelegate).selectModel(/* incognito= */ true);
         verifyBatchedAndReset();
+        ephemeralModel.destroy();
     }
 
     @Test
@@ -613,14 +602,13 @@ public class TabCollectionTabModelImplUnitTest {
                         /* supportUndo= */ true);
 
         assertFalse(incognitoModel.supportsPendingClosures());
+        incognitoModel.destroy();
     }
 
     @Test
     public void testRemoveTabsAndSelectNext_closeLastIncognitoTabWithStubRegularModel() {
         doReturn(true).when(mOtrProfile).isOffTheRecord();
         doReturn(true).when(mOtrProfile).isIncognitoBranded();
-        when(mTabCollectionTabModelImplJni.init(eq(mOtrProfile)))
-                .thenReturn(TAB_COLLECTION_TAB_MODEL_IMPL_PTR);
 
         TabCollectionTabModelImpl incognitoModel =
                 new TabCollectionTabModelImpl(
@@ -653,6 +641,7 @@ public class TabCollectionTabModelImplUnitTest {
 
         incognitoModel.closeTabs(TabClosureParams.closeAllTabs().allowUndo(false).build());
         verify(mTabModelDelegate).getModel(true);
+        incognitoModel.destroy();
     }
 
     @Test
@@ -660,8 +649,6 @@ public class TabCollectionTabModelImplUnitTest {
         // Mock a profile that is incognito.
         doReturn(true).when(mOtrProfile).isOffTheRecord();
         doReturn(true).when(mOtrProfile).isIncognitoBranded();
-        when(mTabCollectionTabModelImplJni.init(eq(mOtrProfile)))
-                .thenReturn(TAB_COLLECTION_TAB_MODEL_IMPL_PTR);
 
         TabCollectionTabModelImpl incognitoModel =
                 new TabCollectionTabModelImpl(
@@ -687,6 +674,7 @@ public class TabCollectionTabModelImplUnitTest {
                 tab, 0, TabLaunchType.FROM_CHROME_UI, TabCreationState.LIVE_IN_FOREGROUND);
         verify(mOrderController).willOpenInForeground(TabLaunchType.FROM_CHROME_UI, true);
         verifyBatchedAndReset();
+        incognitoModel.destroy();
     }
 
     @Test
@@ -739,6 +727,7 @@ public class TabCollectionTabModelImplUnitTest {
                         false);
 
         assertEquals(mIncognitoTabCreator, incognitoModel.getTabCreator());
+        incognitoModel.destroy();
     }
 
     @Test
@@ -1026,16 +1015,13 @@ public class TabCollectionTabModelImplUnitTest {
         when(mTabModelDelegate.isReparentingInProgress()).thenReturn(true);
 
         long newCollectionPtr = TAB_COLLECTION_TAB_MODEL_IMPL_PTR + 1;
+        JniUniquePtr<TabCollectionTabModelImpl.NativeTabCollectionTabModelImpl> newPtr =
+                JniUniquePtr.createForTesting(newCollectionPtr);
         List<Tab> newTabs = new ArrayList<>();
-        when(mTabCollectionTabModelImplJni.init(eq(mProfile))).thenReturn(newCollectionPtr);
-        when(mTabCollectionTabModelImplJni.getAllTabs(eq(newCollectionPtr))).thenReturn(newTabs);
+        doReturn(newPtr).when(mTabCollectionTabModelImplJni).init(eq(mProfile));
+        when(mTabCollectionTabModelImplJni.getAllTabs(eq(newPtr))).thenReturn(newTabs);
         when(mTabCollectionTabModelImplJni.addTabRecursive(
-                        eq(newCollectionPtr),
-                        any(Tab.class),
-                        anyInt(),
-                        any(),
-                        anyBoolean(),
-                        anyBoolean()))
+                        eq(newPtr), any(Tab.class), anyInt(), any(), anyBoolean(), anyBoolean()))
                 .thenAnswer(
                         invocation -> {
                             Tab addedTab = invocation.getArgument(1);
@@ -1058,8 +1044,7 @@ public class TabCollectionTabModelImplUnitTest {
         assertNull(mTabModel.getTabById(1));
         assertNull(mTabModel.getCurrentTabSupplier().get());
         assertFalse(mTabModel.isTabMultiSelected(1));
-        verify(mTabCollectionTabModelImplJni)
-                .removeTabRecursive(TAB_COLLECTION_TAB_MODEL_IMPL_PTR, tab);
+        verify(mTabCollectionTabModelImplJni).removeTabRecursive(any(), eq(tab));
         verify(mTabModelObserver, never()).tabRemoved(any());
         verify(mTabModelObserver, never()).willCloseTab(any(), anyBoolean());
 
@@ -1156,6 +1141,29 @@ public class TabCollectionTabModelImplUnitTest {
         assertFalse(
                 "A tab not in the set and not active should not be selected.",
                 mTabModel.isTabMultiSelected(unselectedTabId));
+    }
+
+    @Test
+    public void testGetHighlightedTabs() {
+        assertTrue(mTabModel.getHighlightedTabs().isEmpty());
+
+        // The mocked order controller inserts at index 0, so the strip order is tab3, tab2, tab1
+        // and tab1 (added first) is the active tab at index 2.
+        MockTab tab1 = addTabAtFront(1);
+        MockTab tab2 = addTabAtFront(2);
+        MockTab tab3 = addTabAtFront(3);
+        assertEquals(List.of(tab3, tab2, tab1), mTabModel.getAllTabs());
+        assertEquals(List.of(tab1), mTabModel.getHighlightedTabs());
+
+        mTabModel.setTabsMultiSelected(
+                new LinkedHashSet<>(Arrays.asList(tab1.getId(), tab3.getId())),
+                /* isSelected= */ true);
+        assertEquals(List.of(tab1, tab3), mTabModel.getOrderedMultiSelectedTabs());
+        assertEquals(List.of(tab3, tab1), mTabModel.getHighlightedTabs());
+
+        mTabModel.clearMultiSelection(/* notifyObservers= */ false);
+        mTabModel.destroy();
+        assertTrue(mTabModel.getHighlightedTabs().isEmpty());
     }
 
     @Test
@@ -1358,12 +1366,7 @@ public class TabCollectionTabModelImplUnitTest {
         assertEquals(groupId, restoredTab.getTabGroupId());
         assertEquals(restoredTab, mTabModel.getCurrentTabSupplier().get());
         verify(mTabCollectionTabModelImplJni)
-                .createTabGroup(
-                        eq(TAB_COLLECTION_TAB_MODEL_IMPL_PTR),
-                        eq(groupId),
-                        any(),
-                        anyInt(),
-                        anyBoolean());
+                .createTabGroup(any(), eq(groupId), any(), anyInt(), anyBoolean());
         verify(mTabModelObserver)
                 .didSelectTab(
                         restoredTab, TabSelectionType.FROM_UNDO, /* lastId= */ Tab.INVALID_TAB_ID);
@@ -1433,40 +1436,10 @@ public class TabCollectionTabModelImplUnitTest {
         return tab;
     }
 
-    /**
-     * Replaces {@link #mTabModel} with an archived model backed by {@link #mTabs} and a distinct
-     * native collection pointer so {@link #tearDown()} still verifies a single destroy of {@link
-     * #TAB_COLLECTION_TAB_MODEL_IMPL_PTR}.
-     */
+    /** Replaces {@link #mTabModel} with an archived model backed by {@link #mTabs}. */
     private TabCollectionTabModelImpl createArchivedModel() {
         mTabModel.removeObserver(mTabModelObserver);
         mTabModel.destroy();
-
-        long archivedCollectionPtr = TAB_COLLECTION_TAB_MODEL_IMPL_PTR + 1;
-        when(mTabCollectionTabModelImplJni.init(eq(mProfile))).thenReturn(archivedCollectionPtr);
-        when(mTabCollectionTabModelImplJni.getAllTabs(eq(archivedCollectionPtr))).thenReturn(mTabs);
-        when(mTabCollectionTabModelImplJni.addTabRecursive(
-                        eq(archivedCollectionPtr),
-                        any(Tab.class),
-                        anyInt(),
-                        any(),
-                        anyBoolean(),
-                        anyBoolean()))
-                .thenAnswer(
-                        invocation -> {
-                            Tab tab = invocation.getArgument(1);
-                            int index = invocation.getArgument(2);
-                            mTabs.add(index, tab);
-                            return index;
-                        });
-        doAnswer(
-                        invocation -> {
-                            Tab tab = invocation.getArgument(1);
-                            mTabs.remove(tab);
-                            return null;
-                        })
-                .when(mTabCollectionTabModelImplJni)
-                .removeTabRecursive(eq(archivedCollectionPtr), any(Tab.class));
 
         when(mTabModelJniBridgeJni.init(
                         any(TabModelJniBridge.class),

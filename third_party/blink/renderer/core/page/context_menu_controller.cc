@@ -46,6 +46,7 @@
 #include "third_party/blink/public/web/web_text_check_client.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_container_impl.h"
 #include "third_party/blink/renderer/core/annotation/annotation_agent_impl.h"
+#include "third_party/blink/renderer/core/clipboard/data_transfer.h"
 #include "third_party/blink/renderer/core/dom/document.h"
 #include "third_party/blink/renderer/core/dom/element_traversal.h"
 #include "third_party/blink/renderer/core/dom/events/event_target.h"
@@ -316,11 +317,6 @@ Node* ContextMenuController::GetContextMenuNodeWithImageContents() {
     }
   }
 
-  // Only log if we found an image node within the hit test.
-  if (found_image_node != nullptr) {
-    base::UmaHistogramCounts1000("Blink.ContextMenu.ImageSelection.Depth",
-                                 hit_test_depth);
-  }
   // If there is anything preventing this image selection, return nullptr.
   uint32_t blocking_image_selection_mask =
       ~(EnumToBitmask(ImageSelectionOutcome::kImageFoundStandard) |
@@ -714,8 +710,9 @@ bool ContextMenuController::ShowContextMenu(
         // Add context menu commands that are supported by the plugin.
         // Only show rotate view options if focus is not in an editable text
         // area.
-        if (!plugin_can_edit_text && plugin->CanRotateView())
+        if (!plugin_can_edit_text && plugin->CanRotateView()) {
           data.media_flags |= ContextMenuData::kMediaCanRotate;
+        }
       }
     }
   } else {
@@ -723,9 +720,9 @@ bool ContextMenuController::ShowContextMenu(
     // does not override a topmost media element.
     // TODO(benwgold): Consider extending penetration to all media types.
     Node* potential_image_node = result.InnerNodeOrImageMapImage();
-    SCOPED_BLINK_UMA_HISTOGRAM_TIMER(
-        "Blink.ContextMenu.ImageSelection.ElapsedTime");
     potential_image_node = GetContextMenuNodeWithImageContents();
+
+    Element* svg_root = StandaloneSVGRootForImageActions(result);
 
     if (potential_image_node != nullptr &&
         IsA<HTMLCanvasElement>(potential_image_node)) {
@@ -754,6 +751,15 @@ bool ContextMenuController::ShowContextMenu(
         data.image_replacement_frame_token =
             image_element->ReplacementFrameToken();
       }
+    } else if (svg_root && !result.IsSelected(location) &&
+               DataTransfer::CanCreateNodeImageForClipboard(
+                   *svg_root->GetDocument().GetFrame(), *svg_root)) {
+      // A standalone SVG is an image document without an HTML image element.
+      data.src_url = GURL(selected_frame->GetDocument()->Url());
+      data.media_type = mojom::blink::ContextMenuDataMediaType::kImage;
+      data.media_flags |= ContextMenuData::kMediaCanPrint;
+      data.has_image_contents = true;
+      image_selection_cached_result_ = svg_root;
     }
   }
   // If it's not a link, an image, a media element, or an image/media link,

@@ -65,7 +65,6 @@
 #include "services/network/public/mojom/trust_tokens.mojom-blink.h"
 #include "services/network/public/mojom/web_sandbox_flags.mojom-blink.h"
 #include "third_party/blink/public/common/features.h"
-#include "third_party/blink/public/common/permissions_policy/document_policy_features.h"
 #include "third_party/blink/public/common/thread_safe_browser_interface_broker_proxy.h"
 #include "third_party/blink/public/mojom/css/preferred_color_scheme.mojom-blink.h"
 #include "third_party/blink/public/mojom/css/preferred_contrast.mojom-blink.h"
@@ -1298,21 +1297,6 @@ Location* Document::location() const {
   return domWindow()->location();
 }
 
-bool Document::DocumentPolicyFeatureObserved(
-    mojom::blink::DocumentPolicyFeature feature) {
-  wtf_size_t feature_index = static_cast<wtf_size_t>(feature);
-  if (parsed_document_policies_.size() == 0) {
-    parsed_document_policies_.resize(
-        static_cast<wtf_size_t>(
-            mojom::blink::DocumentPolicyFeature::kMaxValue) +
-        1);
-  } else if (parsed_document_policies_[feature_index]) {
-    return true;
-  }
-  parsed_document_policies_[feature_index] = true;
-  return false;
-}
-
 void Document::ChildrenChanged(const ChildrenChange& change) {
   ContainerNode::ChildrenChanged(change);
   document_element_ = ElementTraversal::FirstWithin(*this);
@@ -2512,6 +2496,9 @@ Document::CalculateStyleAndLayoutTreeUpdateForThisDocument() const {
   if (style_engine_->NeedsStyleRecalc()) {
     return StyleAndLayoutTreeUpdate::kAnalyzed;
   }
+  if (style_engine_->HasFlatTreeMovedNodes()) {
+    return StyleAndLayoutTreeUpdate::kAnalyzed;
+  }
   if (style_engine_->NeedsStyleInvalidation()) {
     return StyleAndLayoutTreeUpdate::kAnalyzed;
   }
@@ -2834,6 +2821,8 @@ void Document::UpdateStyleAndLayoutTreeForThisDocument() {
   UpdateUseShadowTreesIfNeeded();
 
   UpdateOverscrollCommandTargets();
+
+  style_engine.DetachDisplayLockedFlatTreeMovedNodesIfNeeded();
 
   style_engine.UpdateActiveStyle();
   style_engine.UpdateCounterStyles();

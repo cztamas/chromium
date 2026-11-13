@@ -18,6 +18,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "base/test/task_environment.h"
 #include "base/test/test_future.h"
+#include "build/build_config.h"
 #include "chrome/browser/contextual_search/contextual_search_web_contents_helper.h"
 #include "chrome/browser/contextual_tasks/active_task_context_provider.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_cookie_synchronizer.h"
@@ -26,6 +27,7 @@
 #include "chrome/browser/contextual_tasks/contextual_tasks_permission_controller.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_service_factory.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_tab_restore_data.h"
+#include "chrome/browser/contextual_tasks/contextual_tasks_test_utils.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_ui.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_ui_service.h"
 #include "chrome/browser/contextual_tasks/contextual_tasks_ui_service_factory.h"
@@ -257,6 +259,7 @@ class CountingTabContextualizationController
 class ContextualTasksSidePanelCoordinatorTest : public testing::Test {
  public:
   void SetUp() override {
+    SKIP_IF_CONTEXTUAL_TASKS_UNSUPPORTED();
     TestingProfile::Builder builder;
     builder.AddTestingFactory(
         ChromeSigninClientFactory::GetInstance(),
@@ -380,6 +383,9 @@ class ContextualTasksSidePanelCoordinatorTest : public testing::Test {
   }
 
   void TearDown() override {
+    if (IsSkipped()) {
+      return;
+    }
     mock_controller_ = nullptr;
     mock_panel_host_ = nullptr;
 

@@ -54,7 +54,9 @@ class TtcMesClient
       const GURL& url,
       const std::string& title,
       const optimization_guide::proto::AnnotatedPageContent& apc) override;
-  void ReportPlaybackStatus(int64_t last_played_sequence_number) override;
+  void ReportPlaybackStatus(base::TimeDelta playback_progress,
+                            bool playback_complete,
+                            int64_t generation_id) override;
   void Close() override;
   bool is_transport_connected() const override;
   std::optional<std::string> GetSessionId() const override;
@@ -84,6 +86,13 @@ class TtcMesClient
       optimization_guide::OptimizationGuideModelStreamingResult result);
   void OnSetupTimeout();
   void HandleToolCall(const optimization_guide::proto::ToolCall& tool_call);
+  // Passes the calls in `batch` to the observer together. Calls that can't be
+  // converted are answered with an error and left out.
+  void HandleToolCallBatch(
+      const optimization_guide::proto::ToolCallBatch& batch);
+  // Returns a callback that sends the result of `tool_call` to the server.
+  ToolResponseCallback MakeToolResponseCallback(
+      const optimization_guide::proto::ToolCall& tool_call);
   void OnToolExecutionComplete(const std::string& call_id,
                                const std::string& tool_name,
                                ToolResponse response);

@@ -1477,8 +1477,6 @@ component("base") {
       "android/jni_array.h",
       "android/jni_bytebuffer.cc",
       "android/jni_bytebuffer.h",
-      "android/jni_registrar.cc",
-      "android/jni_registrar.h",
       "android/jni_string.cc",
       "android/jni_string.h",
       "android/jni_utils.cc",
@@ -2246,6 +2244,8 @@ component("base") {
       "mac/scoped_mach_msg_destroy.h",
       "mac/scoped_sending_event.h",
       "mac/scoped_sending_event.mm",
+      "mac/workgroup.cc",
+      "mac/workgroup.h",
       "message_loop/message_pump_kqueue.cc",
       "message_loop/message_pump_kqueue.h",
       "power_monitor/battery_level_provider_mac.mm",
@@ -3581,7 +3581,7 @@ if (is_android) {
 
     public_deps = [
       ":base",
-      "//third_party/libunwindstack_tmp:libunwindstack",
+      "//third_party/libunwindstack",
     ]
   }
 }
@@ -4564,7 +4564,7 @@ test("base_unittests") {
         ":base_profiler_test_support_jni",
         ":base_profiler_test_support_library",
         ":native_unwinder_android",
-        "//third_party/libunwindstack_tmp:libunwindstack",
+        "//third_party/libunwindstack",
       ]
     }
 
@@ -4652,6 +4652,7 @@ test("base_unittests") {
       "mac/pasteboard_changed_observation_unittest.mm",
       "mac/process_requirement_unittest.cc",
       "mac/scoped_sending_event_unittest.mm",
+      "mac/workgroup_unittest.cc",
       "message_loop/message_pump_apple_unittest.mm",
       "power_monitor/thermal_state_observer_mac_unittest.mm",
       "process/memory_unittest_mac.h",
@@ -6774,7 +6775,10 @@ fuzzer_test("time_fuzzer") {
 
 fuzzer_test("utf_string_conversions_fuzzer") {
   sources = [ "strings/utf_string_conversions_fuzzer.cc" ]
-  deps = [ "//base" ]
+  deps = [
+    "//base",
+    "//testing/libfuzzer:libfuzzer_base_wrappers",
+  ]
 }
 
 fuzzer_test("pickle_fuzzer") {

@@ -2495,6 +2495,47 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Android.EdgeToEdge.Top.Eligible" enum="Boolean"
+    expires_after="2027-05-01">
+  <owner>aixba@chromium.org</owner>
+  <owner>dmurph@chromium.org</owner>
+  <owner>edge-to-edge@chromium.org</owner>
+  <summary>
+    Records if the current activity is eligible for top edge-to-edge based on
+    the device configuration (phone form factor, Android R+, and
+    non-automotive). Recorded on ChromeTabbedActivity launch.
+  </summary>
+</histogram>
+
+<histogram name="Android.EdgeToEdge.Top.IneligibilityReason"
+    enum="IneligibilityReason" expires_after="2027-05-01">
+  <owner>aixba@chromium.org</owner>
+  <owner>dmurph@chromium.org</owner>
+  <owner>edge-to-edge@chromium.org</owner>
+  <summary>
+    Records the reason why the current session is not eligible for top
+    edge-to-edge. Multiple reasons might be recorded for a single session.
+    Recorded on ChromeTabbedActivity launch.
+  </summary>
+</histogram>
+
+<histogram name="Android.EdgeToEdge.TopScalp.PageLoadState"
+    enum="TopScalpPageLoadState" expires_after="2027-05-01">
+  <owner>aixba@chromium.org</owner>
+  <owner>dmurph@chromium.org</owner>
+  <owner>edge-to-edge@chromium.org</owner>
+  <summary>
+    Records the effective top scalp rendering state when a page finishes loading
+    on the active Tab in ChromeTabbedActivity while the top edge-to-edge feature
+    is enabled. On unsupported configurations (such as tablets, foldables in
+    tablet mode, automotive devices, or Android versions below R), only opted-in
+    page loads record (Opted-in suppressed by unsupported config), while
+    non-opted-in page loads are omitted; this check takes precedence over
+    persistent fullscreen. On supported configurations, persistent fullscreen
+    takes precedence over opt-in checks.
+  </summary>
+</histogram>
+
 <histogram name="Android.Event.ActionDown" enum="InputDeviceSource"
     expires_after="2026-12-27">
   <owner>mvanouwerkerk@chromium.org</owner>
@@ -9668,7 +9709,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Android.WebView.Startup.CreationTime.NotFirstInstance"
-    units="ms" expires_after="2026-12-13">
+    units="ms" expires_after="2027-06-13">
   <owner>torne@chromium.org</owner>
   <owner>src/android_webview/OWNERS</owner>
   <improvement direction="LOWER_IS_BETTER"/>

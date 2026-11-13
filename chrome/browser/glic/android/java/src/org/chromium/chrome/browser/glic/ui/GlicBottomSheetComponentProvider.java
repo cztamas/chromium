@@ -13,6 +13,7 @@ import androidx.annotation.Px;
 import androidx.annotation.VisibleForTesting;
 
 import org.jni_zero.CalledByNative;
+import org.jni_zero.CalledByNativeForTesting;
 import org.jni_zero.JNINamespace;
 import org.jni_zero.JniPtr;
 import org.jni_zero.JniRawPtr;
@@ -39,7 +40,7 @@ import org.chromium.chrome.browser.tab_bottom_sheet.TabBottomSheetContent;
 import org.chromium.chrome.browser.tab_bottom_sheet.TabBottomSheetManager;
 import org.chromium.chrome.browser.tab_bottom_sheet.TabBottomSheetSkeletonCoordinator;
 import org.chromium.chrome.browser.tab_bottom_sheet.TabBottomSheetUtils;
-import org.chromium.components.browser_ui.settings.SettingsCustomTabLauncher;
+import org.chromium.components.browser_ui.util.CustomTabLauncher;
 import org.chromium.components.browser_ui.widget.text.TextViewWithCompoundDrawables;
 
 /**
@@ -49,11 +50,11 @@ import org.chromium.components.browser_ui.widget.text.TextViewWithCompoundDrawab
 @JNINamespace("glic")
 @NullMarked
 public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvider {
-    @JniType("::glic::GlicSidePanelCoordinatorAndroid")
-    interface NativeGlicSidePanelCoordinatorAndroid extends JniTypeToken {}
+    @JniType("::glic::GlicCoBrowseViews")
+    interface NativeGlicCoBrowseViews extends JniTypeToken {}
 
     private final Profile mProfile;
-    private @Nullable JniRawPtr<NativeGlicSidePanelCoordinatorAndroid> mNativeCoordinator;
+    private @Nullable JniRawPtr<NativeGlicCoBrowseViews> mNativeCoBrowseViews;
     @VisibleForTesting boolean mShowNativeFre;
     private @Nullable ActorControlStateTracker mActorControlStateTracker;
     private @Nullable GlicBottomSheetContent mActiveContent;
@@ -61,15 +62,14 @@ public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvid
     /** JNI static factory method to create the provider. */
     @CalledByNative
     private static GlicBottomSheetComponentProvider createProvider(
-            Profile profile, JniRawPtr<NativeGlicSidePanelCoordinatorAndroid> nativeCoordinator) {
-        return new GlicBottomSheetComponentProvider(profile, nativeCoordinator);
+            Profile profile, JniRawPtr<NativeGlicCoBrowseViews> nativeCoBrowseViews) {
+        return new GlicBottomSheetComponentProvider(profile, nativeCoBrowseViews);
     }
 
     GlicBottomSheetComponentProvider(
-            Profile profile,
-            @Nullable JniRawPtr<NativeGlicSidePanelCoordinatorAndroid> nativeCoordinator) {
+            Profile profile, @Nullable JniRawPtr<NativeGlicCoBrowseViews> nativeCoBrowseViews) {
         mProfile = profile;
-        mNativeCoordinator = nativeCoordinator;
+        mNativeCoBrowseViews = nativeCoBrowseViews;
     }
 
     @CalledByNative
@@ -82,11 +82,16 @@ public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvid
         }
     }
 
+    @CalledByNativeForTesting
+    boolean isNativeFreShowingForTesting() {
+        return mActiveContent != null && mActiveContent.isNativeFreShowingForTesting(); // IN-TEST
+    }
+
     @Override
     public void destroy() {
-        if (mNativeCoordinator != null) {
-            mNativeCoordinator.release();
-            mNativeCoordinator = null;
+        if (mNativeCoBrowseViews != null) {
+            mNativeCoBrowseViews.release();
+            mNativeCoBrowseViews = null;
         }
         configureNativeFre(false);
         mActiveContent = null;
@@ -107,7 +112,6 @@ public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvid
             Context context,
             @ColorInt int backgroundColor,
             @ColorInt int placeholderElemColor,
-            boolean isSidePanel,
             Runnable onCloseClicked) {
         return GlicLoadingPlaceholderView.create(
                 context, backgroundColor, placeholderElemColor, onCloseClicked);
@@ -161,7 +165,7 @@ public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvid
 
     private void mountNativeFreOnActiveContent() {
         if (mActiveContent == null) return;
-        SettingsCustomTabLauncher customTabLauncher = GlicNavigationUtils.getCustomTabLauncher();
+        CustomTabLauncher customTabLauncher = GlicNavigationUtils.getCustomTabLauncher();
         assert customTabLauncher != null;
         if (customTabLauncher == null) return;
         mActiveContent.mountNativeFre(customTabLauncher, this::notifyNativeFreAccepted);
@@ -189,13 +193,13 @@ public class GlicBottomSheetComponentProvider implements CoBrowseComponentProvid
     @VisibleForTesting
     void notifyNativeFreAccepted() {
         mShowNativeFre = false;
-        if (mNativeCoordinator != null) {
-            GlicBottomSheetComponentProviderJni.get().onNativeFreAccepted(mNativeCoordinator);
+        if (mNativeCoBrowseViews != null) {
+            GlicBottomSheetComponentProviderJni.get().onNativeFreAccepted(mNativeCoBrowseViews);
         }
     }
 
     @NativeMethods
     interface Natives {
-        void onNativeFreAccepted(JniPtr<NativeGlicSidePanelCoordinatorAndroid> self);
+        void onNativeFreAccepted(JniPtr<NativeGlicCoBrowseViews> self);
     }
 }

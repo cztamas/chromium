@@ -10,6 +10,7 @@
 #include <string_view>
 #include <vector>
 
+#include "base/functional/bind.h"
 #include "base/functional/function_ref.h"
 #include "base/memory/raw_ref.h"
 #include "base/run_loop.h"
@@ -25,6 +26,7 @@
 #include "chrome/browser/ttc/core/features.h"
 #include "chrome/browser/ui/actions/chrome_action_id.h"
 #include "chrome/browser/ui/actions/chrome_action_properties.h"
+#include "chrome/browser/ui/ai_overlay_dialog/ai_overlay_dialog_controller.h"
 #include "chrome/browser/ui/browser_actions.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -35,6 +37,7 @@
 #include "chrome/browser/ui/ui_features.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
 #include "chrome/browser/ui/views/toolbar/download_button.h"
+#include "chrome/browser/ui/views/toolbar/pinned_action_toolbar_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/browser/ui/views/toolbar/webui_pinned_toolbar_actions_test_base.h"
 #include "chrome/browser/ui/views/toolbar/webui_test_utils.h"
@@ -50,6 +53,7 @@
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/scoped_accessibility_mode_override.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
+#include "third_party/skia/include/core/SkColor.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/ax_node_id_forward.h"
@@ -58,6 +62,8 @@
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/image_model.h"
 #include "ui/color/color_provider.h"
+#include "ui/gfx/geometry/size.h"
+#include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icon_types.h"
 #include "ui/views/accessibility/ax_update_notifier.h"
 #include "ui/views/accessibility/ax_update_observer.h"
@@ -610,6 +616,74 @@ IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsBrowserTest,
                   BrowserActions::From(browser())->root_action_item())
       ->SetProperty(kActionItemUnderlineIndicatorKey, false);
   verify_activated(false);
+}
+
+IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsBrowserTest,
+                       CircleHighlightEngagedIndicatorRendering) {
+  actions::ActionId action_id = kActionPrint;
+  toolbar_ui_api::mojom::PinnedToolbarAction mojom_action =
+      toolbar_ui_api::mojom::PinnedToolbarAction::kPrint;
+
+  PinAction(action_id, mojom_action);
+
+  auto verify_circle_highlight = [&](bool expected) {
+    ASSERT_TRUE(base::test::RunUntil([&]() {
+      return EvalJsOnPinnedAction(
+                 mojom_action,
+                 base::StringPrintf(
+                     "const indicator = "
+                     "actionEl.shadowRoot.querySelector('.status-indicator'); "
+                     "return !btn.hasAttribute('is-activated') && "
+                     "btn.hasAttribute('has-circle-highlight') === %s && "
+                     "!!indicator && !indicator.checkVisibility();",
+                     expected ? "true" : "false"))
+          .ExtractBool();
+    }));
+  };
+
+  // Initially not highlighted.
+  verify_circle_highlight(false);
+
+  actions::ActionItem* const action_item =
+      actions::ActionManager::Get().FindAction(
+          action_id, BrowserActions::From(browser())->root_action_item());
+  ASSERT_TRUE(action_item);
+
+  const auto* color_provider =
+      BrowserView::GetBrowserViewForBrowser(browser())->GetColorProvider();
+  const SkColor highlight_color =
+      color_provider->GetColor(kColorAvatarButtonHighlightDefault);
+  ASSERT_EQ(SK_AlphaOPAQUE, SkColorGetA(highlight_color));
+  const std::string expected_highlight_rgb = base::StringPrintf(
+      "rgb(%d, %d, %d)", SkColorGetR(highlight_color),
+      SkColorGetG(highlight_color), SkColorGetB(highlight_color));
+
+  // Configure circle highlight engaged indicator style and activate the action.
+  action_item->SetProperty(kActionItemEngagedIndicatorStyleKey,
+                           ActionItemEngagedIndicatorStyle::kCircleHighlight);
+  action_item->SetProperty(kActionItemUnderlineIndicatorKey, true);
+  verify_circle_highlight(true);
+  EXPECT_EQ(
+      expected_highlight_rgb,
+      EvalJsOnPinnedAction(
+          mojom_action,
+          "return innerBtn ? getComputedStyle(innerBtn).backgroundColor : "
+          "'(null)';"));
+
+  // While the action is highlighted (e.g. side panel open), the circle
+  // highlight background is suppressed.
+  WebUIToolbarWebView* webui_toolbar_view = GetWebUIToolbarWebView(browser());
+  webui_toolbar_view->GetPinnedToolbarActions()->UpdateActionState(action_id,
+                                                                   true);
+  verify_circle_highlight(false);
+
+  webui_toolbar_view->GetPinnedToolbarActions()->UpdateActionState(action_id,
+                                                                   false);
+  verify_circle_highlight(true);
+
+  // Deactivating the action removes the circle highlight.
+  action_item->SetProperty(kActionItemUnderlineIndicatorKey, false);
+  verify_circle_highlight(false);
 }
 
 IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsBrowserTest, IconSizeDelta) {
@@ -1295,6 +1369,74 @@ IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsAiOverlayBrowserTest,
               toolbar_ui_api::mojom::PinnedToolbarAction::kShowAiOverlayDialog);
   PinAction(kActionShowAiOverlayDialog,
             toolbar_ui_api::mojom::PinnedToolbarAction::kShowAiOverlayDialog);
+}
+
+// Showing the overlay swaps the action's icon to a pause icon, and closing it
+// swaps it back to the mic icon. Both must be reflected in the pinned button.
+IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsAiOverlayBrowserTest,
+                       ShowAndCloseOverlay) {
+  constexpr auto kMojomAction =
+      toolbar_ui_api::mojom::PinnedToolbarAction::kShowAiOverlayDialog;
+  auto* controller = ttc::AiOverlayDialogController::From(browser());
+  ASSERT_TRUE(controller);
+  ASSERT_TRUE(WaitForPinnedActionVisible(kMojomAction));
+
+  controller->ShowOverlay();
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return EvalJsOnPinnedAction(kMojomAction, "return iconName || '(null)'") ==
+           "webui-toolbar:pause_filled";
+  }));
+
+  controller->CloseOverlay();
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return EvalJsOnPinnedAction(kMojomAction, "return iconName || '(null)'") ==
+           "webui-toolbar:mic_filled";
+  }));
+}
+
+// Showing the overlay pops out the action even when it isn't pinned, and
+// closing the overlay hides it again.
+IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsAiOverlayBrowserTest,
+                       ShowOverlayWhileUnpinned) {
+  constexpr auto kMojomAction =
+      toolbar_ui_api::mojom::PinnedToolbarAction::kShowAiOverlayDialog;
+  auto* controller = ttc::AiOverlayDialogController::From(browser());
+  ASSERT_TRUE(controller);
+  UnpinAction(kActionShowAiOverlayDialog, kMojomAction);
+
+  controller->ShowOverlay();
+  EXPECT_TRUE(WaitForPinnedActionVisible(kMojomAction));
+
+  controller->CloseOverlay();
+  EXPECT_TRUE(WaitForPinnedActionHidden(kMojomAction));
+}
+
+// While the overlay reports audio energy, the action's icon is a generated
+// (non-vector) image. The pinned button must accept it.
+IN_PROC_BROWSER_TEST_F(WebUIPinnedToolbarActionsAiOverlayBrowserTest,
+                       GeneratedImageIcon) {
+  constexpr auto kMojomAction =
+      toolbar_ui_api::mojom::PinnedToolbarAction::kShowAiOverlayDialog;
+  actions::ActionItem* action_item = actions::ActionManager::Get().FindAction(
+      kActionShowAiOverlayDialog,
+      BrowserActions::From(browser())->root_action_item());
+  ASSERT_TRUE(action_item);
+  ASSERT_TRUE(WaitForPinnedActionVisible(kMojomAction));
+
+  action_item->SetImage(ui::ImageModel::FromImageGenerator(
+      base::BindRepeating([](const ui::ColorProvider* color_provider) {
+        return gfx::CreateVectorIcon(vector_icons::kMicFilledIcon, 16,
+                                     SK_ColorBLACK);
+      }),
+      gfx::Size(16, 16)));
+
+  // Non-vector images are rasterized into a data URL rather than mapped to a
+  // named icon.
+  EXPECT_TRUE(base::test::RunUntil([&]() {
+    return EvalJsOnPinnedAction(kMojomAction, "return iconName || '(null)'") ==
+           "(null)";
+  }));
+  EXPECT_TRUE(IsPinnedActionVisible(kMojomAction));
 }
 
 class WebUIPinnedToolbarActionsByDateHistoryBrowserTest

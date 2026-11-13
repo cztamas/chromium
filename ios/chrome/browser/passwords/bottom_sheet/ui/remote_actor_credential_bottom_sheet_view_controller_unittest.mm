@@ -234,7 +234,7 @@ TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
   EXPECT_FALSE(view_controller_.modalInPresentation);
 
   [view_controller_ setLoading:YES];
-  EXPECT_TRUE(view_controller_.configuration.isLoading);
+  EXPECT_TRUE(view_controller_.configuration.loading);
   EXPECT_FALSE(view_controller_.modalInPresentation);
 
   [view_controller_ setLoading:NO];
@@ -280,6 +280,38 @@ TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
   EXPECT_EQ(ChromeButtonStyleTertiary, secondary_button.style);
   EXPECT_FALSE([primary_button.accessibilityLabel
       isEqualToString:loading_accessibility_label]);
+}
+
+// Tests that the confirmation state replaces the loading state's spinner with a
+// checkmark in the primary style with an accessibility label, and disables
+// both buttons.
+TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
+       TestConfirmedShowsCheckmark) {
+  LoadViewWithSuggestions(@[ PasswordSuggestion(@"user") ]);
+  ChromeButton* primary_button = chrome_test_util::FindViewById<ChromeButton>(
+      view_controller_.view, kButtonStackPrimaryActionAccessibilityIdentifier);
+  ChromeButton* secondary_button = chrome_test_util::FindViewById<ChromeButton>(
+      view_controller_.view,
+      kButtonStackSecondaryActionAccessibilityIdentifier);
+  ASSERT_TRUE(primary_button);
+  ASSERT_TRUE(secondary_button);
+
+  [view_controller_ setLoading:YES];
+  EXPECT_TRUE(view_controller_.configuration.loading);
+  EXPECT_EQ(PrimaryButtonImageSpinner, primary_button.primaryButtonImage);
+  EXPECT_NSEQ(
+      l10n_util::GetNSString(IDS_IOS_PASSWORD_SHARING_STATUS_PROGRESS_TITLE),
+      primary_button.accessibilityLabel);
+
+  [view_controller_ showConfirmationState];
+  EXPECT_FALSE(view_controller_.configuration.loading);
+  EXPECT_TRUE(view_controller_.configuration.confirmed);
+  EXPECT_EQ(PrimaryButtonImageCheckmark, primary_button.primaryButtonImage);
+  EXPECT_FALSE(primary_button.enabled);
+  EXPECT_FALSE(secondary_button.enabled);
+  EXPECT_EQ(ChromeButtonStylePrimary, primary_button.style);
+  EXPECT_NSEQ(l10n_util::GetNSString(IDS_IOS_PASSWORD_SHARING_SUCCESS_TITLE),
+              primary_button.accessibilityLabel);
 }
 
 // Tests that the view controller configures the subtitle without link tags and
@@ -404,16 +436,42 @@ TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
       ConfigurationAtRow(0).title);
 }
 
-// Tests that the first row has a checkmark when the suggestions arrive after
-// the view has loaded.
+// Tests that a single suggestion arriving after the view has loaded has a
+// checkmark and isn't selectable.
 TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
        SelectedRowHasCheckmark) {
   [view_controller_ setDomain:base::SysUTF16ToNSString(kTestDomain)];
   [view_controller_ loadViewIfNeeded];
-  [view_controller_ setSuggestions:@[
-    PasswordSuggestion(@"user1"), PasswordSuggestion(@"user2")
-  ]];
+  [view_controller_ setSuggestions:@[ PasswordSuggestion(@"user1") ]];
 
+  UITableView* table_view = TableView();
+  ASSERT_TRUE(table_view);
+  UITableViewCell* cell = CellAtRow(0);
+  EXPECT_EQ(UITableViewCellAccessoryCheckmark, cell.accessoryType);
+
+  [table_view.delegate tableView:table_view
+                 willDisplayCell:cell
+               forRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
+  EXPECT_FALSE(cell.userInteractionEnabled);
+}
+
+// Tests that selecting another row moves the checkmark to it.
+TEST_F(RemoteActorCredentialBottomSheetViewControllerTest,
+       SelectingAnotherRowMovesCheckmark) {
+  LoadViewWithSuggestions(
+      @[ PasswordSuggestion(@"user1"), PasswordSuggestion(@"user2") ]);
+  UITableView* table_view = TableView();
+  ASSERT_TRUE(table_view);
+  EXPECT_EQ(UITableViewCellAccessoryCheckmark, CellAtRow(0).accessoryType);
+  EXPECT_EQ(UITableViewCellAccessoryNone, CellAtRow(1).accessoryType);
+
+  [table_view.delegate tableView:table_view
+         didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:1 inSection:0]];
+  EXPECT_EQ(UITableViewCellAccessoryNone, CellAtRow(0).accessoryType);
+  EXPECT_EQ(UITableViewCellAccessoryCheckmark, CellAtRow(1).accessoryType);
+
+  [table_view.delegate tableView:table_view
+         didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0]];
   EXPECT_EQ(UITableViewCellAccessoryCheckmark, CellAtRow(0).accessoryType);
   EXPECT_EQ(UITableViewCellAccessoryNone, CellAtRow(1).accessoryType);
 }

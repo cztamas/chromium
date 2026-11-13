@@ -34,15 +34,6 @@ chromium-metrics-reviews@google.com.
   <variant name=".InfobarTypePasswordUpdate" summary=""/>
 </variants>
 
-<variants name="MobileFreInflationSpeedComparison">
-  <variant name=".FasterThanInflation"
-      summary="This histogram reports just those timings that were faster
-               than inflation."/>
-  <variant name=".SlowerThanInflation"
-      summary="This histogram reports just those timings that were slower
-               than inflation."/>
-</variants>
-
 <variants name="MobileInfobarType">
   <variant name="InfobarTypeAutofillAddressProfile"
       summary="Recorded for Autofill Address Infobar."/>
@@ -1035,16 +1026,6 @@ chromium-metrics-reviews@google.com.
   <token key="NotificationChannelId" variants="NotificationChannelId"/>
 </histogram>
 
-<histogram name="MobileDownload.DownloadPromptStatus"
-    enum="DownloadPromptStatus" expires_after="2023-02-16">
-  <owner>qinmin@chromium.org</owner>
-  <owner>clank-downloads@google.com</owner>
-  <summary>
-    Android: Records whether download dialog will be shown to the user. Recorded
-    when the download preference is initialized in native.
-  </summary>
-</histogram>
-
 <histogram name="MobileDownload.Location.Dialog.Result"
     enum="DownloadLocationDialogResult" expires_after="2022-02-16">
   <owner>qinmin@chromium.org</owner>
@@ -1075,35 +1056,6 @@ chromium-metrics-reviews@google.com.
     through download preference. May be recorded even when the user didn't
     download anything.
   </summary>
-</histogram>
-
-<histogram
-    name="MobileFre.CctTos.EnterprisePolicyCheckSpeed2{MobileFreInflationSpeedComparison}"
-    units="ms" expires_after="2022-05-01">
-  <owner>skym@chromium.org</owner>
-  <owner>wenyufu@chromium.org</owner>
-  <summary>
-    Android: Records the time it takes from ToS fragment attached to the
-    activity to the enterprise policy check completing. This check is often
-    skipped when its result becomes irrelevant.
-    {MobileFreInflationSpeedComparison}
-  </summary>
-  <token key="MobileFreInflationSpeedComparison"
-      variants="MobileFreInflationSpeedComparison"/>
-</histogram>
-
-<histogram
-    name="MobileFre.CctTos.IsDeviceOwnedCheckSpeed2{MobileFreInflationSpeedComparison}"
-    units="ms" expires_after="2022-05-01">
-  <owner>skym@chromium.org</owner>
-  <owner>wenyufu@chromium.org</owner>
-  <summary>
-    Android: Records the time it takes from ToS fragment attached to the
-    activity to the device ownership check completing.
-    {MobileFreInflationSpeedComparison}
-  </summary>
-  <token key="MobileFreInflationSpeedComparison"
-      variants="MobileFreInflationSpeedComparison"/>
 </histogram>
 
 <histogram name="MobileFre.ChildAccountStatusDuration" units="ms"
@@ -1404,24 +1356,6 @@ chromium-metrics-reviews@google.com.
     bundle exists, it is classified by whether Cipher data was successfully
     recovered. Recorded during #initializeState. Applicable to Android only.
   </summary>
-</histogram>
-
-<histogram name="MobileStartup.ToolbarInflationTime{ChromeActivityName}"
-    units="ms" expires_after="2023-12-28">
-  <owner>pasko@chromium.org</owner>
-  <summary>
-    Android: The time spent performing toolbar layout inflation.
-    {ChromeActivityName}
-  </summary>
-  <token key="ChromeActivityName">
-    <variant name=".ChromeTabbedActivity"
-        summary="Activity launched in TABBED mode on Android"/>
-    <variant name=".CustomTabActivity"
-        summary="Activity launched with a CUSTOM TAB on Android"/>
-    <variant name=".DocumentActivity"
-        summary="Activity launched in DOCUMENT mode (Tabs and apps together)
-                 on Android"/>
-  </token>
 </histogram>
 
 <histogram name="MobileStartup.UnparcelBundleRecursiveDuration" units="ms"

@@ -57,6 +57,10 @@ GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kNoUndamagedOverlayPromotion);
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kAdjustGpuProcessPriority);
 #endif
 
+GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kCapCommandBufferWaitPriority);
+GPU_CONFIG_EXPORT extern const base::FeatureParam<base::TimeDelta>
+    kCommandBufferWaitHighPriorityDelay;
+
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kClearGrShaderDiskCacheOnInvalidPrefix);
 
 GPU_CONFIG_EXPORT BASE_DECLARE_FEATURE(kGpuInitOptimization);
@@ -94,6 +98,9 @@ struct GPU_CONFIG_EXPORT SkiaGraphiteFeatureParams {
 
   // Maximum number of pending recordings before submitting to the GPU.
   int max_pending_recordings = 100;
+
+  // Maximum number of pending commands before submitting to the GPU.
+  int max_pending_commands = 500000;
 
   // Maximum time since the last submit before a newly inserted recording
   // forces a submit to the GPU.
@@ -155,6 +162,9 @@ inline bool SkiaGraphiteDawnEnableAutoMap() {
 }
 inline int SkiaGraphiteMaxPendingRecordings() {
   return GetSkiaGraphiteFeatureParams().max_pending_recordings;
+}
+inline int SkiaGraphiteMaxPendingCommands() {
+  return GetSkiaGraphiteFeatureParams().max_pending_commands;
 }
 inline base::TimeDelta SkiaGraphiteMaxTimeBetweenSubmits() {
   return GetSkiaGraphiteFeatureParams().max_time_between_submits;

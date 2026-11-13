@@ -14,6 +14,7 @@ import static org.junit.Assert.assertTrue;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
+import android.view.View;
 
 import androidx.core.graphics.Insets;
 import androidx.test.filters.MediumTest;
@@ -39,24 +40,31 @@ import org.chromium.base.test.util.HistogramWatcher;
 import org.chromium.base.test.util.MinAndroidSdkLevel;
 import org.chromium.base.test.util.Restriction;
 import org.chromium.base.test.util.UserActionTester;
+import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.compositor.layouts.Layout.Orientation;
 import org.chromium.chrome.browser.flags.ChromeFeatureList;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationConfigManager;
 import org.chromium.chrome.browser.ntp_customization.NtpCustomizationUtils.NtpBackgroundType;
 import org.chromium.chrome.browser.tasks.tab_management.TabUiTestHelper;
+import org.chromium.chrome.browser.ui.RootUiCoordinator;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeControllerImpl;
 import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils;
+import org.chromium.chrome.browser.ui.edge_to_edge.EdgeToEdgeUtils.TopScalpPageLoadState;
 import org.chromium.chrome.browser.ui.messages.snackbar.Snackbar;
 import org.chromium.chrome.browser.ui.messages.snackbar.SnackbarManager;
+import org.chromium.chrome.browser.ui.system.StatusBarColorController;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.transit.AutoResetCtaTransitTestRule;
 import org.chromium.chrome.test.transit.ChromeTransitTestRules;
 import org.chromium.chrome.test.util.ActivityTestUtils;
+import org.chromium.components.browser_ui.widget.scrim.ScrimManager;
+import org.chromium.components.browser_ui.widget.scrim.ScrimProperties;
 import org.chromium.content_public.browser.test.util.UiUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 import org.chromium.ui.UiSwitches;
 import org.chromium.ui.base.DeviceFormFactor;
+import org.chromium.ui.modelutil.PropertyModel;
 import org.chromium.ui.test.util.DeviceRestriction;
 import org.chromium.ui.test.util.RenderTestRule;
 import org.chromium.ui.test.util.RenderTestRule.Component;
@@ -99,6 +107,12 @@ public class EdgeToEdgeInstrumentationTest {
             HistogramWatcher.newBuilder()
                     .expectBooleanRecord("Android.EdgeToEdge.Eligible2.OnCreateController", true)
                     .expectNoRecords("Android.EdgeToEdge.IneligibilityReason2.OnCreateController")
+                    .build();
+
+    HistogramWatcher mTopEligibleHistograms =
+            HistogramWatcher.newBuilder()
+                    .expectBooleanRecord("Android.EdgeToEdge.Top.Eligible", true)
+                    .expectNoRecords("Android.EdgeToEdge.Top.IneligibilityReason")
                     .build();
 
     @Before
@@ -306,6 +320,28 @@ public class EdgeToEdgeInstrumentationTest {
 
     @Test
     @MediumTest
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TOP_INSET + ":enable_top_edge_to_edge/true")
+    public void testTopEdgeToEdge_PageLoadMetrics() {
+        mTopEligibleHistograms.assertExpected("Incorrect top eligibility histogram recordings");
+        UserActionTester userActionTester = new UserActionTester();
+        try {
+            var watcher =
+                    HistogramWatcher.newSingleRecordWatcher(
+                            "Android.EdgeToEdge.TopScalp.PageLoadState",
+                            TopScalpPageLoadState.OPTED_IN_SCROLLABLE_SCALP);
+            goToEdge();
+            watcher.assertExpected();
+            Assert.assertTrue(
+                    "MobilePageLoadedWithTopToEdge should be recorded on viewport-fit=cover"
+                            + " page load",
+                    userActionTester.getActions().contains("MobilePageLoadedWithTopToEdge"));
+        } finally {
+            userActionTester.tearDown();
+        }
+    }
+
+    @Test
+    @MediumTest
     @DisableFeatures(ChromeFeatureList.ANDROID_BOTTOM_BAR)
     public void testNavigationBarColor() {
         optOutOfToEdge();
@@ -427,6 +463,83 @@ public class EdgeToEdgeInstrumentationTest {
                                         .getEdgeToEdgeManager()
                                         .getEdgeToEdgeSystemBarColorHelper()
                                         .getNavigationBarColor());
+    }
+
+    /**
+     * Verifies that when the edge-to-edge top scalp draws the status bar area, a scrim that affects
+     * the status bar is not also blended into the status bar color. The scrim view already draws
+     * over the scalp, so blending would darken it twice.
+     */
+    @Test
+    @MediumTest
+    @EnableFeatures(ChromeFeatureList.EDGE_TO_EDGE_TOP_INSET + ":enable_top_edge_to_edge/true")
+    public void testTopScalp_statusBarScrimNotBlendedIntoStatusBarColor() {
+        assertTrue(
+                "Top edge-to-edge (top scalp) should be enabled for this test.",
+                EdgeToEdgeUtils.isTopEdgeToEdgeEnabled()
+                        && EdgeToEdgeUtils.isEdgelessTopInsetSupported(mActivity));
+        optOutOfToEdge();
+
+        RootUiCoordinator rootUiCoordinator = mActivity.getRootUiCoordinatorForTesting();
+        StatusBarColorController statusBarColorController =
+                rootUiCoordinator.getStatusBarColorController();
+        ScrimManager scrimManager = rootUiCoordinator.getScrimManager();
+        View anchorView = mActivity.findViewById(R.id.compositor_view_holder);
+
+        int unscrimmedStatusBarColor =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () ->
+                                mActivity
+                                        .getEdgeToEdgeManager()
+                                        .getEdgeToEdgeSystemBarColorHelper()
+                                        .getStatusBarColor());
+
+        PropertyModel scrimModel =
+                ThreadUtils.runOnUiThreadBlocking(
+                        () -> {
+                            PropertyModel model =
+                                    new PropertyModel.Builder(ScrimProperties.ALL_KEYS)
+                                            .with(ScrimProperties.ANCHOR_VIEW, anchorView)
+                                            .with(
+                                                    ScrimProperties.SHOW_IN_FRONT_OF_ANCHOR_VIEW,
+                                                    true)
+                                            .with(ScrimProperties.AFFECTS_STATUS_BAR, true)
+                                            .build();
+                            scrimManager.showScrim(model);
+                            scrimManager.forceAnimationToFinish(model);
+                            return model;
+                        });
+
+        try {
+            CriteriaHelper.pollUiThread(
+                    () -> {
+                        Integer scrimStatusBarColor =
+                                scrimManager.getStatusBarColorSupplier().get();
+                        boolean isScrimStatusBarColorApplied =
+                                scrimStatusBarColor != null
+                                        && scrimStatusBarColor != Color.TRANSPARENT;
+                        Criteria.checkThat(isScrimStatusBarColorApplied, is(true));
+                        Criteria.checkThat(
+                                statusBarColorController.getScrimColorForTesting(),
+                                is(scrimStatusBarColor));
+                    });
+
+            ThreadUtils.runOnUiThreadBlocking(
+                    () ->
+                            assertEquals(
+                                    "Scrim should not be blended into the status bar color when"
+                                            + " the top scalp draws the status bar area.",
+                                    unscrimmedStatusBarColor,
+                                    mActivity
+                                            .getEdgeToEdgeManager()
+                                            .getEdgeToEdgeSystemBarColorHelper()
+                                            .getStatusBarColor()));
+        } finally {
+            ThreadUtils.runOnUiThreadBlocking(
+                    () ->
+                            scrimManager.hideScrim(
+                                    scrimModel, /* animate= */ false, /* duration= */ 0));
+        }
     }
 
     /**

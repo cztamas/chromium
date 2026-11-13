@@ -15,8 +15,6 @@
 #include "base/memory/stack_allocated.h"
 #include "base/types/strong_alias.h"
 #include "services/device/public/mojom/screen_orientation_lock_types.mojom-blink-forward.h"
-#include "services/network/public/cpp/permissions_policy/permissions_policy_declaration.h"
-#include "third_party/blink/public/common/manifest/manifest.h"
 #include "third_party/blink/public/common/safe_url_pattern.h"
 #include "third_party/blink/public/mojom/manifest/display_mode.mojom-blink-forward.h"
 #include "third_party/blink/public/mojom/manifest/manifest.mojom-blink.h"
@@ -80,23 +78,10 @@ class MODULES_EXPORT ManifestParser {
   // Partially represents `URLPatternInit` in the URL Pattern spec.
   // https://urlpattern.spec.whatwg.org/#dictdef-urlpatterninit
   struct PatternInit {
-    PatternInit(std::optional<String> protocol,
-                std::optional<String> username,
-                std::optional<String> password,
-                std::optional<String> hostname,
-                std::optional<String> port,
-                std::optional<String> pathname,
-                std::optional<String> search,
-                std::optional<String> hash,
-                KURL base_url);
-    ~PatternInit();
-    PatternInit(const PatternInit&) = delete;
-    PatternInit& operator=(const PatternInit&) = delete;
-    PatternInit(PatternInit&&);
-    PatternInit& operator=(PatternInit&&);
-
     // Returns true if any of protocol, hostname, or port are filled.
-    bool IsAbsolute() const;
+    bool IsAbsolute() const {
+      return protocol.has_value() || hostname.has_value() || port.has_value();
+    }
 
     std::optional<String> protocol;
     std::optional<String> username;
@@ -246,9 +231,9 @@ class MODULES_EXPORT ManifestParser {
 
   // Parses the 'display_override' field of the manifest.
   // https://github.com/WICG/display-override/blob/master/explainer.md
-  // Returns a vector of the parsed DisplayMode if any, an empty vector if
-  // the field was not present or empty.
-  Vector<blink::Manifest::DisplayOverride> ParseDisplayOverride(
+  // Returns a vector of the parsed DisplayOverrideItemPtr if any, an empty
+  // vector if the field was not present or empty.
+  Vector<mojom::blink::DisplayOverrideItemPtr> ParseDisplayOverride(
       const JSONObject* object);
 
   // Parses the 'orientation' field of the manifest, as defined in:
@@ -592,7 +577,7 @@ class MODULES_EXPORT ManifestParser {
 
   // Helper function to parse an individual URL pattern. See also
   // `ParseUrlPatterns`.
-  std::optional<SafeUrlPattern> ParseUrlPattern(const String& property_name,
+  std::optional<SafeUrlPattern> ParseUrlPattern(const String& field_name,
                                                 const PatternInit& init,
                                                 const KURL& base_url);
 
@@ -609,7 +594,8 @@ class MODULES_EXPORT ManifestParser {
   ParseDescriptionLocalized(const JSONObject* object);
 
   std::optional<PatternInit> MaybeCreatePatternInit(
-      const JSONObject* pattern_object);
+      const JSONObject* pattern_object,
+      const String& field_name);
 
   String ParseVersion(const JSONObject* object);
 

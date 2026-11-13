@@ -19,9 +19,6 @@
 
 namespace features {
 
-// Enables the migration of browser commands to Action API.
-BASE_FEATURE(kUseActionsForBrowserCommands, base::FEATURE_ENABLED_BY_DEFAULT);
-
 // Enables the use of WGC for the Eye Dropper screen capture.
 BASE_FEATURE(kAllowEyeDropperWGCScreenCapture,
 #if BUILDFLAG(IS_WIN)
@@ -65,7 +62,8 @@ BASE_FEATURE(kFastFaviconDisplay, base::FEATURE_ENABLED_BY_DEFAULT);
 BASE_FEATURE(kFedCmIdpLinks, base::FEATURE_DISABLED_BY_DEFAULT);
 
 // Enables the request permission UI with a container for the disclosure text
-// in the FedCM active mode modal dialog on desktop.
+// in the FedCM modal permission dialog on desktop and the active mode bottom
+// sheet on Android.
 BASE_FEATURE(kFedCmPermissionUiWithContainer,
              base::FEATURE_DISABLED_BY_DEFAULT);
 
@@ -218,11 +216,6 @@ bool IsHistoryPageRefreshEnabled() {
   return (base::FeatureList::IsEnabled(kDesktopGlowUp) ||
           base::FeatureList::IsEnabled(kWebuiRefresh2026)) &&
          base::FeatureList::IsEnabled(kHistoryPageRefresh);
-}
-
-bool ShouldUseActionsForBrowserCommands() {
-  return base::FeatureList::IsEnabled(kUseActionsForBrowserCommands) ||
-         base::FeatureList::IsEnabled(kAppMenuGlowUp);
 }
 
 #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_LINUX)

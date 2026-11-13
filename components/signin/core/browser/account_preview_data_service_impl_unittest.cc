@@ -1108,10 +1108,16 @@ TEST_F(AccountPreviewDataServiceTest,
        DoesNotStorePreferredAccountWhenFeatureDisabledButRecordsMetrics) {
   base::HistogramTester histogram_tester;
 
-  // Disable preferred account feature flag.
+  // Disable preferred account feature flags.
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      switches::kEnableAccountPreviewPreferredAccount);
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/{
+          switches::kEnableAccountPreviewPreferredAccount,
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+          switches::kEnableAccountPreviewPreferredAccountFRE,
+#endif
+      });
 
   signin::WaitForRefreshTokensLoaded(identity_test_env_.identity_manager());
 
@@ -1136,7 +1142,7 @@ TEST_F(AccountPreviewDataServiceTest,
   run_loop.Run();
 
   // Verify that the preferred account in prefs was NOT overwritten by
-  // OnAllFetchesCompleted() because the feature flag is disabled, while
+  // OnAllFetchesCompleted() because the feature flags are disabled, while
   // selection heuristic metrics were still recorded.
   EXPECT_THAT(service_->GetPreferredAccountForSignin(),
               testing::Optional(testing::Field(
@@ -1210,7 +1216,9 @@ TEST_F(AccountPreviewDataServiceTest,
       1);
   histograms.ExpectUniqueSample(
       "Signin.AccountPreview.AsyncPreferredAccountResult",
-      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::kFetched, 1);
+      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::
+          kFetchedWithResult,
+      1);
 }
 
 TEST_F(AccountPreviewDataServiceTest,
@@ -1250,7 +1258,40 @@ TEST_F(AccountPreviewDataServiceTest,
       1);
   histograms.ExpectUniqueSample(
       "Signin.AccountPreview.AsyncPreferredAccountResult",
-      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::kFetched, 1);
+      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::
+          kFetchedWithResult,
+      1);
+}
+
+TEST_F(AccountPreviewDataServiceTest,
+       GetPreferredAccountForSigninAsyncFetchedWithoutResult) {
+  base::test::ScopedFeatureList feature_list{
+      switches::kEnableAccountPreviewPreferredAccountFRE};
+
+  MockFailedStatsFetch(&test_url_loader_factory_, net::ERR_FAILED);
+  MockFailedPreviewsFetch(&test_url_loader_factory_, net::ERR_FAILED);
+  base::RunLoop run_loop_fail;
+  service_->SetAllDataAvailableCallbackForTesting(run_loop_fail.QuitClosure());
+  identity_test_env_.MakeAccountAvailable("user@gmail.com");
+  run_loop_fail.Run();
+  ASSERT_EQ(std::nullopt, service_->GetPreferredAccountForSignin());
+
+  base::HistogramTester histograms;
+  base::test::TestFuture<std::optional<AccountPreviewPreference>> future;
+  service_->GetPreferredAccountForSigninAsync(future.GetCallback(),
+                                              kDefaultAsyncFetchTimeout);
+  EXPECT_FALSE(future.IsReady());
+  EXPECT_EQ(std::nullopt, future.Get());
+  histograms.ExpectUniqueSample(
+      "Signin.AccountPreview.AllFetchTriggerCause",
+      AccountPreviewDataServiceImpl::FetchTriggerCause::
+          kPreferredAccountMissingForAsyncFetch,
+      1);
+  histograms.ExpectUniqueSample(
+      "Signin.AccountPreview.AsyncPreferredAccountResult",
+      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::
+          kFetchedWithoutResult,
+      1);
 }
 
 TEST_F(AccountPreviewDataServiceTest,
@@ -1376,7 +1417,9 @@ TEST_F(AccountPreviewDataServiceTest,
       1);
   histograms.ExpectUniqueSample(
       "Signin.AccountPreview.AsyncPreferredAccountResult",
-      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::kFetched, 1);
+      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::
+          kFetchedWithResult,
+      1);
 }
 
 TEST_F(
@@ -1567,7 +1610,9 @@ TEST_F(AccountPreviewDataServiceTest,
       AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::kTimeout, 1);
   histograms.ExpectBucketCount(
       "Signin.AccountPreview.AsyncPreferredAccountResult",
-      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::kFetched, 1);
+      AccountPreviewDataServiceImpl::AsyncPreferredAccountResult::
+          kFetchedWithResult,
+      1);
   histograms.ExpectTotalCount(
       "Signin.AccountPreview.AsyncPreferredAccountResult", 2);
 }
@@ -2824,8 +2869,14 @@ TEST_F(AccountPreviewDataServiceTest,
 TEST_F(AccountPreviewDataServiceTest,
        GetPreviewPreferenceForAccountFeatureDisabled) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(
-      switches::kEnableAccountPreviewPreferredAccount);
+  feature_list.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/{
+          switches::kEnableAccountPreviewPreferredAccount,
+#if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
+          switches::kEnableAccountPreviewPreferredAccountFRE,
+#endif
+      });
 
   AccountInfo account =
       identity_test_env_.MakeAccountAvailable("user@gmail.com");

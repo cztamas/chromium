@@ -301,6 +301,41 @@ TEST_F(OtpTabToFrameOrchestratorTest,
   EXPECT_THAT(QuerySuggestions(form2, *form2.field(0)), HasValue("333333"));
 }
 
+// Tests that submitting an OTP form that stays in the DOM unchanged (e.g. a
+// single-page app rejecting an incorrect code via XHR, so the form is not
+// re-classified) keeps listening, so that a resent OTP is offered and
+// proactively triggered, and that listening stops once the form is removed.
+TEST_F(OtpTabToFrameOrchestratorTest,
+       KeepsListeningAfterSubmissionUntilFormIsRemoved) {
+  const FormStructure& form = AddOtpForm();
+  const AutofillField* field = form.field(0);
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 1u);
+
+  FormData submitted_form = form.ToFormData();
+  test_api(submitted_form).field(0).set_value(u"000000");
+  autofill_manager().NotifyObservers(
+      &AutofillManager::Observer::OnBeforeFormSubmitted, submitted_form);
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 1u);
+
+  autofill_manager().NotifyObservers(
+      &AutofillManager::Observer::OnBeforeFocusOnFormField, form.global_id(),
+      field->global_id());
+  SendSmsOtp("123456");
+  EXPECT_THAT(autofill_driver().triggered_fields(),
+              ElementsAre(field->global_id()));
+  EXPECT_THAT(QuerySuggestions(form, *field), HasValue("123456"));
+
+  autofill_manager().NotifyObservers(
+      &AutofillManager::Observer::OnBeforeFormsSeen,
+      /*updated_forms=*/std::vector<FormGlobalId>{},
+      /*removed_forms=*/std::vector<FormGlobalId>{form.global_id()});
+  autofill_manager().NotifyObservers(
+      &AutofillManager::Observer::OnAfterFormsSeen,
+      /*updated_forms=*/std::vector<FormGlobalId>{},
+      /*removed_forms=*/std::vector<FormGlobalId>{form.global_id()});
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 0u);
+}
+
 TEST_F(OtpTabToFrameOrchestratorTest,
        FillOrPreviewFormMarksOtpConsumedAcrossFields) {
   const FormStructure& form = AddOtpForm(/*fields=*/2);
@@ -399,6 +434,34 @@ TEST_F(OtpTabToFrameOrchestratorTest,
       /*updated_forms=*/std::vector<FormGlobalId>{},
       /*removed_forms=*/std::vector<FormGlobalId>{form2.global_id()});
   EXPECT_EQ(sms_otp_service_->num_subscribers(), 0u);
+}
+
+// Verifies that `GetOtpSuggestions()` returns `{}` immediately when no OTP is
+// cached, renews the underlying source subscription, and proactively triggers
+// the OTP popup once an SMS OTP arrives asynchronously.
+TEST_F(OtpTabToFrameOrchestratorTest,
+       GetOtpSuggestionsReturnsImmediatelyAndRenewsSubscription) {
+  const FormStructure& form = AddOtpForm();
+  const AutofillField* field = form.field(0);
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 1u);
+
+  // Expire the initial SMS subscription before any OTP arrives.
+  task_environment_.FastForwardBy(base::Minutes(1) + base::Seconds(1));
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 0u);
+
+  // Querying suggestions returns `{}` immediately and renews the subscription.
+  EXPECT_THAT(QuerySuggestions(form, *field), IsEmpty());
+  EXPECT_EQ(sms_otp_service_->num_subscribers(), 1u);
+
+  // When an SMS OTP arrives asynchronously, it triggers a proactive popup on
+  // the focused OTP field.
+  autofill_manager().NotifyObservers(
+      &AutofillManager::Observer::OnBeforeFocusOnFormField, form.global_id(),
+      field->global_id());
+  SendSmsOtp("654321");
+  EXPECT_THAT(autofill_driver().triggered_fields(),
+              ElementsAre(field->global_id()));
+  EXPECT_THAT(QuerySuggestions(form, *field), HasValue("654321"));
 }
 
 }  // namespace

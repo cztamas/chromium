@@ -78,7 +78,6 @@
 #include "chrome/browser/page_info/page_info_features.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_initialize.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
-#include "chrome/browser/payments/web_payments_observer.h"
 #include "chrome/browser/permissions/one_time_permissions_tracker_helper.h"
 #include "chrome/browser/picture_in_picture/auto_picture_in_picture_tab_helper.h"
 #include "chrome/browser/plugins/plugin_observer_android.h"
@@ -87,6 +86,7 @@
 #include "chrome/browser/preloading/new_tab_page_preload/new_tab_page_preload_pipeline_manager.h"
 #include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_manager_factory.h"
 #include "chrome/browser/preloading/prefetch/no_state_prefetch/no_state_prefetch_tab_helper.h"
+#include "chrome/browser/preloading/prerender/prewarm_tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_key.h"
 #include "chrome/browser/resource_coordinator/tab_helper.h"
@@ -158,6 +158,7 @@
 #include "components/page_content_annotations/content/annotate_page_content_request.h"
 #include "components/page_content_annotations/content/page_content_annotations_web_contents_observer.h"
 #include "components/page_content_annotations/core/page_content_extraction_types.h"
+#include "components/payments/content/web_payments_observer.h"
 #include "components/payments/core/features.h"
 #include "components/performance_manager/embedder/performance_manager_registry.h"
 #include "components/performance_manager/public/performance_manager.h"
@@ -301,6 +302,8 @@ TabFeatures::TabFeatures(content::WebContents* web_contents, Profile* profile) {
   new_tab_page_preload_pipeline_manager_ =
       GetUserDataFactory().CreateInstance<NewTabPagePreloadPipelineManager>(
           *tab, *tab, web_contents);
+
+  prewarm_tab_helper_ = PrewarmTabHelper::MaybeCreate(*tab, web_contents);
 
   if (base::FeatureList::IsEnabled(
           security_interstitials::features::kHttpsFirstDialogUi)) {

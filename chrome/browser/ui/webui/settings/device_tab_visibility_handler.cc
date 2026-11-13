@@ -78,20 +78,14 @@ void DeviceTabVisibilityHandler::RegisterMessages() {
 }
 
 void DeviceTabVisibilityHandler::OnJavascriptAllowed() {
-  // `base::Unretained` is safe because the subscriptions are destroyed when
-  // `this` is destroyed or when JavaScript is disallowed.
-  session_visibility_changed_subscription_ =
-      session_sync_prefs_.SubscribeToSessionVisibilityChanged(
-          base::BindRepeating(
-              &DeviceTabVisibilityHandler::OnForeignSessionsChanged,
-              base::Unretained(this)));
-
   SessionSyncService* service =
       SessionSyncServiceFactory::GetForProfile(&profile_.get());
   if (!service) {
     return;
   }
 
+  // `base::Unretained` is safe because the subscription is destroyed when
+  // `this` is destroyed or when JavaScript is disallowed.
   foreign_session_updated_subscription_ =
       service->SubscribeToForeignSessionsChanged(base::BindRepeating(
           &DeviceTabVisibilityHandler::OnForeignSessionsChanged,
@@ -99,9 +93,8 @@ void DeviceTabVisibilityHandler::OnJavascriptAllowed() {
 }
 
 void DeviceTabVisibilityHandler::OnJavascriptDisallowed() {
-  // Unsubscribe from preference and foreign session updates while JavaScript is
-  // disallowed to avoid firing WebUI events into an inactive page.
-  session_visibility_changed_subscription_ = base::CallbackListSubscription();
+  // Unsubscribe from foreign session updates while JavaScript is disallowed to
+  // avoid firing WebUI events into an inactive page.
   foreign_session_updated_subscription_ = base::CallbackListSubscription();
 }
 
@@ -119,10 +112,9 @@ base::ListValue DeviceTabVisibilityHandler::GetDeviceTabVisibilityList() const {
     return {};
   }
 
-  // TODO(crbug.com/572717502): Also include synced devices that have no open
-  // tabs (`GetAllForeignSessions()` only returns sessions with open tabs).
   std::vector<raw_ptr<const SyncedSession, VectorExperimental>> sessions;
-  if (!open_tabs->GetAllForeignSessions(&sessions)) {
+  if (!open_tabs->GetAllForeignSessions(
+          &sessions, OpenTabsUIDelegate::ForeignSessionFilter::kAll)) {
     return {};
   }
 

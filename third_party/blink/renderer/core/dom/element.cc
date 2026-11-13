@@ -5193,6 +5193,7 @@ void Element::DetachDescendantsNeedingReattachDuringSkip() {
     // subtree is no longer skipped.
     if (child->GetForceReattachLayoutTree()) {
       child->DetachLayoutTree();
+      child->SetStyleChangeOnInsertion();
       child->SetForceReattachLayoutTree();
     } else if (child->ChildNeedsStyleRecalc()) {
       if (auto* child_element = DynamicTo<Element>(child)) {
@@ -9589,6 +9590,13 @@ void Element::SetIsOverlayPopupAd() {
   RareData()->GetDisplayAdElementMonitor()->SetIsOverlayPopupAd();
 }
 
+void Element::SetIsPrestitialAd() {
+  // A prestitial ad is a kind of overlay popup ad, so the popup tag must have
+  // been applied first.
+  CHECK(IsOverlayPopupAd());
+  RareData()->GetDisplayAdElementMonitor()->SetIsPrestitialAd();
+}
+
 bool Element::IsAdRelated() const {
   if (const NodeRareData* data = RareData()) {
     return data->GetDisplayAdElementMonitor();
@@ -9618,6 +9626,15 @@ bool Element::IsOverlayPopupAd() const {
   if (const NodeRareData* data = RareData()) {
     if (const auto* monitor = data->GetDisplayAdElementMonitor()) {
       return monitor->IsOverlayPopupAd();
+    }
+  }
+  return false;
+}
+
+bool Element::IsPrestitialAd() const {
+  if (const NodeRareData* data = RareData()) {
+    if (const auto* monitor = data->GetDisplayAdElementMonitor()) {
+      return monitor->IsPrestitialAd();
     }
   }
   return false;

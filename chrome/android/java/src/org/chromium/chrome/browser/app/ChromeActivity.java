@@ -25,7 +25,6 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PersistableBundle;
-import android.os.SystemClock;
 import android.text.format.DateUtils;
 import android.util.Pair;
 import android.util.Size;
@@ -450,11 +449,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
     private final SettableMonotonicObservableSupplier<SnackbarManager> mSnackbarManagerSupplier =
             ObservableSuppliers.createMonotonic();
     private @Nullable ChromeActivitySnackbarHelper mChromeActivitySnackbarHelper;
-
-    // Timestamp in ms when initial layout inflation begins
-    private long mInflateInitialLayoutBeginMs;
-    // Timestamp in ms when initial layout inflation ends
-    private long mInflateInitialLayoutEndMs;
 
     /** Whether or not a PolicyChangeListener was added. */
     private boolean mDidAddPolicyChangeListener;
@@ -882,7 +876,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
      */
     @Override
     protected final void triggerLayoutInflation() {
-        mInflateInitialLayoutBeginMs = SystemClock.elapsedRealtime();
         try (TraceEvent _ = TraceEvent.scoped("ChromeActivity.triggerLayoutInflation")) {
             SelectionPopupController.setShouldGetReadbackViewFromWindowAndroid();
             SelectionPopupController.setAllowSurfaceControlMagnifier();
@@ -968,8 +961,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
     @Override
     protected void onInitialLayoutInflationComplete() {
-        mInflateInitialLayoutEndMs = SystemClock.elapsedRealtime();
-
         mRootUiCoordinator.getStatusBarColorController().updateStatusBarColor();
 
         ViewGroup rootView = (ViewGroup) getWindow().getDecorView().getRootView();
@@ -1451,10 +1442,13 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
         super.onTopResumedActivityChangedWithNative(isTopResumedActivity);
 
-        View view = isTopResumedActivity ? getWindow().getDecorView() : null;
-        InputHintChecker.setView(view);
-
         if (isTopResumedActivity) {
+            // Intentionally retain the DecorView across top-resumed focus loss so
+            // pending input can still yield the UI thread while this window remains
+            // visible (e.g. behind a translucent dialog or in multi-window mode).
+            // InputHintChecker holds the View via a weak reference and overwrites it
+            // when another ChromeActivity becomes top-resumed.
+            InputHintChecker.setView(getWindow().getDecorView());
             ProfileManager.onProfileActivated(getOriginalProfile());
         }
     }
@@ -1766,9 +1760,6 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
                         () -> {
                             if (isActivityFinishingOrDestroyed()) return;
                             if (getToolbarManager() != null) {
-                                RecordHistogram.recordTimesHistogram(
-                                        "MobileStartup.ToolbarInflationTime." + simpleName,
-                                        mInflateInitialLayoutEndMs - mInflateInitialLayoutBeginMs);
                                 getToolbarManager()
                                         .onDeferredStartup(getOnCreateTimestampMs(), simpleName);
                             }
@@ -2767,6 +2758,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
         insetSupplier.setKeyboardAccessoryInsetSupplier(
                 getManualFillingComponent().getBottomInsetSupplier());
         compositorViewHolder.setApplicationViewportInsetSupplier(insetSupplier);
+        compositorViewHolder.setInsetObserver(getInsetObserver());
 
         compositorViewHolder.setToolbarThemeColorProvider(
                 mRootUiCoordinator.getToolbarThemeColorProvider());
@@ -3304,7 +3296,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
         if (id == R.id.bookmark_this_page_id || id == R.id.bookmark_this_page_menu_id) {
             var bookmarker = assumeNonNull(mTabBookmarkerSupplier.get());
-            bookmarker.addOrEditBookmark(currentTab);
+            bookmarker.addOrEditBookmark(currentTab, /* anchorView= */ null);
             TrackerFactory.getTrackerForProfile(currentTab.getProfile())
                     .notifyEvent(EventConstants.APP_MENU_BOOKMARK_STAR_ICON_PRESSED);
             if (id == R.id.bookmark_this_page_id) {
@@ -3369,7 +3361,7 @@ public abstract class ChromeActivity extends AsyncInitializationActivity
 
         if (id == R.id.enable_price_tracking_menu_id) {
             var bookmarker = assumeNonNull(mTabBookmarkerSupplier.get());
-            bookmarker.startOrModifyPriceTracking(currentTab);
+            bookmarker.startOrModifyPriceTracking(currentTab, /* anchorView= */ null);
             RecordUserAction.record("MobileMenuEnablePriceTracking");
             TrackerFactory.getTrackerForProfile(currentTab.getProfile())
                     .notifyEvent(EventConstants.SHOPPING_LIST_PRICE_TRACK_FROM_MENU);

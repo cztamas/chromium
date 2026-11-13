@@ -125,6 +125,7 @@ chromium-metrics-reviews@google.com.
   <variant name="StartTask" summary="StartTask UiEvent"/>
   <variant name="StoppedActingOnTab" summary="StoppedActingOnTab UiEvent"/>
   <variant name="StopTask" summary="StopTask UiEvent"/>
+  <variant name="TaskActRequested" summary="TaskActRequested UiEvent"/>
   <variant name="TaskStateChanged" summary="TaskStateChanged UiEvent"/>
   <variant name="TaskStepProgressUpdated"
       summary="TaskStepProgressUpdated UiEvent"/>
@@ -527,17 +528,6 @@ chromium-metrics-reviews@google.com.
 
     Warning: this histogram was expired from 2026-08-02 to 2026-08-25; data may
     be missing.
-  </summary>
-</histogram>
-
-<histogram name="Actor.NavigationGating.DarkLaunchConfirmationRequestLatency"
-    units="ms" expires_after="2027-05-02">
-  <owner>masnoble@google.com</owner>
-  <owner>dylancutler@google.com</owner>
-  <summary>
-    Records the latency of the dark launch navigation confirmation request.
-    Recorded when the browser receives the response from the confirmation
-    request in dark launch mode.
   </summary>
 </histogram>
 

@@ -7,6 +7,7 @@
 #include "base/test/scoped_feature_list.h"
 #include "build/build_config.h"
 #include "chrome/browser/autocomplete/aim_eligibility_service_factory.h"
+#include "chrome/browser/contextual_tasks/contextual_tasks_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/web_ui_mocha_browser_test.h"
@@ -65,6 +66,11 @@ class ContextualTasksBrowserTest : public WebUIMochaBrowserTest {
         {contextual_tasks::kContextualTasksRearchitecture,
          contextual_tasks::kContextualTasksSidePanelRearchitecture});
     set_test_loader_host(chrome::kChromeUIContextualTasksHost);
+  }
+
+  void SetUp() override {
+    SKIP_IF_CONTEXTUAL_TASKS_UNSUPPORTED();
+    WebUIMochaBrowserTest::SetUp();
   }
 
   void SetUpInProcessBrowserTestFixture() override {

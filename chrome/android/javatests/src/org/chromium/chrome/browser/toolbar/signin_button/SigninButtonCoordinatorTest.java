@@ -24,6 +24,8 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import static org.chromium.base.test.transit.ViewFinder.waitForView;
+
 import android.app.Activity;
 import android.content.res.ColorStateList;
 import android.graphics.Rect;
@@ -60,7 +62,6 @@ import org.chromium.chrome.test.transit.ntp.IncognitoNewTabPageStation;
 import org.chromium.chrome.test.transit.ntp.RegularNewTabPageStation;
 import org.chromium.chrome.test.transit.page.WebPageStation;
 import org.chromium.chrome.test.transit.signin.SignedOutAccountMenuFacility;
-import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.chrome.test.util.OmniboxTestUtils;
 import org.chromium.chrome.test.util.SettingsTestUtils;
 import org.chromium.chrome.test.util.browser.signin.SigninTestRule;
@@ -79,7 +80,7 @@ import org.chromium.ui.util.ValueUtils;
 /** Integration tests for {@link SigninButtonCoordinator}. */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @Batch(Batch.PER_CLASS)
-@EnableFeatures({SigninFeatures.SIGNIN_LEVEL_UP_BUTTON, SigninFeatures.PROFILE_DISC_ON_ALL_PAGES})
+@EnableFeatures(SigninFeatures.SIGNIN_LEVEL_UP_BUTTON)
 public class SigninButtonCoordinatorTest {
 
     // Mock sign-in environment needs to be destroyed after ChromeTabbedActivity in case there are
@@ -337,16 +338,16 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Should be hidden on navigation away from NTP.
         WebPageStation aboutBlank = mPage.loadAboutBlank();
 
-        aboutBlank.signinButtonElement.checkAbsent();
+        aboutBlank.toolbar.signinButtonElement.checkAbsent();
 
         // Should be visible again when navigating back to NTP.
         RegularNewTabPageStation ntp = aboutBlank.loadNtp();
-        ntp.signinButtonElement.checkPresent();
+        ntp.toolbar.signinButtonElement.checkPresent();
     }
 
     @Test
@@ -356,32 +357,17 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Should still be visible on navigation away from NTP.
         WebPageStation aboutBlank = mPage.loadAboutBlank();
 
-        aboutBlank.signinButtonElement.checkPresent();
+        aboutBlank.toolbar.signinButtonElement.checkPresent();
     }
 
     @Test
     @MediumTest
-    @DisableFeatures(SigninFeatures.PROFILE_DISC_ON_ALL_PAGES)
-    public void testSigninButtonHiddenOnNavigation() {
-        startActivityOnNtp();
-
-        // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
-
-        // Should be hidden on navigation away from NTP.
-        WebPageStation aboutBlank = mPage.loadAboutBlank();
-
-        aboutBlank.signinButtonElement.checkAbsent();
-    }
-
-    @Test
-    @MediumTest
-    @DisableFeatures(SigninFeatures.PROFILE_DISC_ON_ALL_PAGES)
+    @Restriction(DeviceFormFactor.PHONE)
     public void testSigninButton_InflatesAndShowsWhenNavigatingToNtp() {
         // Start on a non-NTP page so button should not be inflated.
         WebPageStation blankPage = mActivityTestRule.startOnBlankPage();
@@ -390,7 +376,7 @@ public class SigninButtonCoordinatorTest {
         // Navigate to the NTP. This triggers updateButtonVisibility -> inflation.
         RegularNewTabPageStation ntp = blankPage.loadNtp();
 
-        ntp.signinButtonElement.checkPresent();
+        ntp.toolbar.signinButtonElement.checkPresent();
     }
 
     @Test
@@ -399,13 +385,13 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         IncognitoNewTabPageStation incognitoNtp = mPage.openNewIncognitoTabOrWindowFast();
 
         // Signin button should not be visible on incognito NTP. It may not be inflated yet in the
         // new incognito tab, which also counts as absent.
-        incognitoNtp.signinButtonElement.checkAbsent();
+        incognitoNtp.toolbar.signinButtonElement.checkAbsent();
     }
 
     @Test
@@ -416,7 +402,7 @@ public class SigninButtonCoordinatorTest {
     public void testClickSigninButton_SignedOut() {
         startActivityOnNtp();
 
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Clicking the sign-in button should lead to the sign-in bottom sheet.
         onView(withId(R.id.signin_button)).perform(click());
@@ -436,7 +422,7 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         setSigninAllowed(false);
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Clicking the avatar should lead to the settings screen when signin is disabled.
         Activity settingsHost =
@@ -480,14 +466,14 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Focus the URL bar.
         OmniboxTestUtils omniboxTestUtils = new OmniboxTestUtils(mActivityTestRule.getActivity());
         omniboxTestUtils.requestFocus();
 
         // Signin button should still be visible on tablet.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         if (SigninButtonMediator.isAccountMenuEnabled()) {
             // Clicking the sign-in button opens the account menu.
@@ -514,20 +500,20 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         // Initially visible on NTP.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         // Focus the URL bar.
         OmniboxTestUtils omniboxTestUtils = new OmniboxTestUtils(mActivityTestRule.getActivity());
         omniboxTestUtils.requestFocus();
 
         // Signin button should be hidden when URL bar is focused.
-        mPage.signinButtonElement.checkAbsent();
+        mPage.toolbar.signinButtonElement.checkAbsent();
 
         // Clear focus from the URL bar.
         omniboxTestUtils.clearFocus();
 
         // Signin button should be visible again.
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
     }
 
     @Test
@@ -639,7 +625,7 @@ public class SigninButtonCoordinatorTest {
         startActivityOnNtp();
 
         AppHeaderUtils.setAppInDesktopWindowForTesting(true);
-        mPage.signinButtonElement.checkPresent();
+        mPage.toolbar.signinButtonElement.checkPresent();
 
         ListMenuButton avatarButton =
                 mActivityTestRule.getActivity().findViewById(R.id.avatar_button);
@@ -672,12 +658,15 @@ public class SigninButtonCoordinatorTest {
         onView(withId(R.id.signin_button)).perform(click());
 
         ViewUtils.waitForVisibleView(withId(R.id.account_menu_container));
-        ViewUtils.waitForVisibleView(withId(R.id.account_menu_managed_header));
 
-        onView(withId(R.id.account_menu_managed_header)).perform(click());
-
-        ChromeTabUtils.waitForTabPageLoaded(
-                mActivityTestRule.getActivityTab(), UrlConstants.MANAGEMENT_URL);
+        // The management page opens in a new tab.
+        waitForView(withId(R.id.account_menu_managed_header))
+                .clickTo()
+                .arriveAt(
+                        WebPageStation.newBuilder()
+                                .initOpeningNewTab()
+                                .withExpectedUrlSubstring(UrlConstants.MANAGEMENT_URL)
+                                .build());
     }
 
     @Test

@@ -10,6 +10,7 @@
 
 #include "base/files/file_path.h"
 #include "base/functional/bind.h"
+#include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ref.h"
 #include "base/memory/weak_ptr.h"
 #include "base/test/metrics/user_action_tester.h"
@@ -17,15 +18,25 @@
 #include "base/unguessable_token.h"
 #include "chrome/browser/glic/android/glic_helper_android.h"
 #include "chrome/browser/glic/glic_pref_names.h"
+#include "chrome/browser/glic/glic_profile_manager.h"
 #include "chrome/browser/glic/host/host.h"
 #include "chrome/browser/glic/public/features.h"
+#include "chrome/browser/glic/public/glic_enabling.h"
+#include "chrome/browser/glic/public/glic_keyed_service.h"
+#include "chrome/browser/glic/public/glic_keyed_service_factory.h"
 #include "chrome/browser/glic/public/glic_side_panel_coordinator.h"
 #include "chrome/browser/glic/service/glic_ui_embedder.h"
 #include "chrome/browser/glic/service/metrics/glic_instance_metrics.h"
+#include "chrome/browser/glic/widget/glic_co_browse_views.h"
 #include "chrome/browser/glic/widget/glic_inactive_side_panel_ui_android.h"
+#include "chrome/browser/profiles/profile_manager.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "chrome/browser/signin/identity_test_environment_profile_adaptor.h"
 #include "chrome/browser/ui/browser_window/test/mock_browser_window_interface.h"
 #include "chrome/common/chrome_features.h"
+#include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
+#include "chrome/test/base/testing_profile_manager.h"
 #include "components/metrics/profile_metrics_service.h"
 #include "components/prefs/pref_service.h"
 #include "components/tabs/public/mock_tab_interface.h"
@@ -88,7 +99,12 @@ class FakeGlicSidePanelCoordinator : public GlicSidePanelCoordinator {
 
   // GlicSidePanelCoordinator:
   void Show(const ShowOptions& options) override { state_ = State::kShown; }
-  void Close(const CloseOptions& options) override { state_ = State::kClosed; }
+  void Close(const CloseOptions& options) override {
+    if (co_browse_views_) {
+      co_browse_views_->OnPanelClosed();
+    }
+    state_ = State::kClosed;
+  }
   bool IsShowing() const override { return state_ == State::kShown; }
   State state() override { return state_; }
   bool SupportsPeek() const override { return true; }
@@ -96,27 +112,28 @@ class FakeGlicSidePanelCoordinator : public GlicSidePanelCoordinator {
       base::RepeatingCallback<void(State state)> callback) override {
     return state_callbacks_.Add(std::move(callback));
   }
-  void SetWebContents(content::WebContents* web_contents) override {
-    last_web_contents_ = web_contents;
+  void SetCoBrowseViews(
+      std::unique_ptr<GlicCoBrowseViews> co_browse_views) override {
+    co_browse_views_ = std::move(co_browse_views);
   }
-  void SetIsLoading(bool is_loading) override {
-    is_loading_ = is_loading;
-    loading_history_.push_back(is_loading);
+  GlicCoBrowseViews* GetCoBrowseViews() const override {
+    return co_browse_views_.get();
   }
   int GetPreferredWidth() override { return 400; }
   bool IsGlicSidePanelActive() override { return state_ != State::kClosed; }
 
-  bool is_loading() const { return is_loading_; }
-  const std::vector<bool>& loading_history() const { return loading_history_; }
+  bool is_loading() const {
+    return co_browse_views_ ? co_browse_views_->is_loading_for_testing()
+                            : false;
+  }
   const content::WebContents* last_web_contents() const {
-    return last_web_contents_;
+    return co_browse_views_ ? co_browse_views_->web_contents_for_testing()
+                            : nullptr;
   }
 
  private:
   State state_ = State::kShown;
-  bool is_loading_ = false;
-  std::vector<bool> loading_history_;
-  raw_ptr<const content::WebContents> last_web_contents_ = nullptr;
+  std::unique_ptr<GlicCoBrowseViews> co_browse_views_;
   base::RepeatingCallbackList<void(State)> state_callbacks_;
 };
 
@@ -259,36 +276,6 @@ class FakeMicPermissionUi : public MicPermissionUi {
   int snackbar_count_ = 0;
 };
 
-class FakeSidePanelCoordinator : public GlicSidePanelCoordinator {
- public:
-  explicit FakeSidePanelCoordinator(tabs::TabInterface* tab)
-      : GlicSidePanelCoordinator(tab) {}
-  ~FakeSidePanelCoordinator() override = default;
-
-  void Show(const ShowOptions& options) override {}
-  void Close(const CloseOptions& options) override {}
-  bool IsShowing() const override { return false; }
-  State state() override { return State::kClosed; }
-  bool SupportsPeek() const override { return true; }
-  base::CallbackListSubscription AddStateCallback(
-      base::RepeatingCallback<void(State state)> callback) override {
-    return {};
-  }
-  void SetWebContents(content::WebContents* web_contents) override {}
-  int GetPreferredWidth() override { return 0; }
-  bool IsGlicSidePanelActive() override { return false; }
-
-  void SetNativeFreAcceptedCallback(
-      base::RepeatingClosure on_accepted) override {
-    on_accepted_ = std::move(on_accepted);
-  }
-
-  const base::RepeatingClosure& on_accepted() const { return on_accepted_; }
-
- private:
-  base::RepeatingClosure on_accepted_;
-};
-
 content::MediaStreamRequest MakeAudioRequest() {
   return content::MediaStreamRequest(
       /*render_process_id=*/0, /*render_frame_id=*/0, /*page_request_id=*/0,
@@ -311,6 +298,7 @@ class GlicSidePanelUiAndroidTest : public testing::Test {
         instance_metrics_(&profile_metrics_service_, &profile_) {
     ON_CALL(browser_window_, GetWindow())
         .WillByDefault(testing::Return(&window_));
+    ON_CALL(mock_tab_, GetProfile()).WillByDefault(testing::Return(&profile_));
   }
   ~GlicSidePanelUiAndroidTest() override = default;
 
@@ -996,22 +984,6 @@ TEST_F(GlicSidePanelUiAndroidTest, CheckMediaAccessPermissionChecksMicSetting) {
       blink::mojom::MediaStreamType::DEVICE_AUDIO_CAPTURE));
 }
 
-TEST_F(GlicSidePanelUiAndroidTest, RoutesNativeFreAccept) {
-  AttachBrowserWindowToTab();
-  FakeSidePanelCoordinator coordinator(tab().get());
-
-  auto side_panel_ui = std::make_unique<GlicSidePanelUi>(
-      profile(), tab(), delegate(), instance_metrics());
-
-  ASSERT_TRUE(coordinator.on_accepted());
-  coordinator.on_accepted().Run();
-  EXPECT_EQ(delegate().accept_count(), 1);
-
-  side_panel_ui.reset();
-  coordinator.on_accepted().Run();
-  EXPECT_EQ(delegate().accept_count(), 1);
-}
-
 TEST_F(GlicSidePanelUiAndroidTest,
        ForwardsNativeLoadingStateToSidePanelCoordinator) {
   FakeGlicSidePanelCoordinator coordinator(&mock_tab());
@@ -1021,7 +993,6 @@ TEST_F(GlicSidePanelUiAndroidTest,
     GlicSidePanelUi side_panel_ui(profile(), tab(), delegate(),
                                   instance_metrics());
     EXPECT_TRUE(coordinator.is_loading());
-    EXPECT_THAT(coordinator.loading_history(), testing::ElementsAre(true));
 
     side_panel_ui.NativeLoadingStateChanged(false);
     EXPECT_FALSE(coordinator.is_loading());
@@ -1034,13 +1005,203 @@ TEST_F(GlicSidePanelUiAndroidTest,
   // Destroying `GlicSidePanelUi` clears loading state on the coordinator.
   EXPECT_FALSE(coordinator.is_loading());
 
-  // Inactive side panel UI also clears loading state and detaches
-  // `WebContents`.
-  coordinator.SetIsLoading(true);
+  // Transitioning from active to inactive side panel UI clears loading state
+  // and detaches `WebContents` on the shared `GlicCoBrowseViews`.
+  auto active_ui = std::make_unique<GlicSidePanelUi>(
+      profile(), tab(), delegate(), instance_metrics());
+  ASSERT_TRUE(coordinator.is_loading());
   auto inactive_ui =
       GlicInactiveSidePanelUi::CreateForVisibleTab(tab(), delegate());
+  active_ui.reset();
   EXPECT_FALSE(coordinator.is_loading());
   EXPECT_EQ(nullptr, coordinator.last_web_contents());
 }
 
+TEST_F(GlicSidePanelUiAndroidTest, RoutesNativeFreAccept) {
+  AttachBrowserWindowToTab();
+  FakeGlicSidePanelCoordinator coordinator(tab().get());
+
+  auto side_panel_ui = std::make_unique<GlicSidePanelUi>(
+      profile(), tab(), delegate(), instance_metrics());
+
+  ASSERT_TRUE(coordinator.GetCoBrowseViews());
+  coordinator.GetCoBrowseViews()->OnNativeFreAccepted();
+  EXPECT_EQ(delegate().accept_count(), 1);
+
+  side_panel_ui.reset();
+  if (coordinator.GetCoBrowseViews()) {
+    coordinator.GetCoBrowseViews()->OnNativeFreAccepted();
+  }
+  EXPECT_EQ(delegate().accept_count(), 1);
+}
+
+TEST_F(GlicSidePanelUiAndroidTest,
+       CoBrowseViewsPreservedAcrossActiveInactiveTransitions) {
+  AttachBrowserWindowToTab();
+  FakeGlicSidePanelCoordinator coordinator(tab().get());
+
+  auto side_panel_ui = std::make_unique<GlicSidePanelUi>(
+      profile(), tab(), delegate(), instance_metrics());
+  GlicCoBrowseViews* initial_views = coordinator.GetCoBrowseViews();
+  ASSERT_TRUE(initial_views);
+
+  // Transition to inactive embedder:
+  auto inactive_ui = side_panel_ui->CreateInactiveEmbedder();
+  EXPECT_EQ(coordinator.GetCoBrowseViews(), initial_views);
+
+  // Destroy active embedder; the coordinator keeps the views alive and the
+  // inactive embedder's close callback remains bound.
+  side_panel_ui.reset();
+  EXPECT_EQ(coordinator.GetCoBrowseViews(), initial_views);
+
+  // Requesting close from the view routes to inactive embedder's Close().
+  initial_views->RequestCloseForTesting();
+  EXPECT_EQ(coordinator.state(), GlicSidePanelCoordinator::State::kClosed);
+}
+
+TEST_F(GlicSidePanelUiAndroidTest, NativeFreLatchSurvivesActiveInactiveReshow) {
+  AttachBrowserWindowToTab();
+  FakeGlicSidePanelCoordinator coordinator(tab().get());
+
+  SetFreCompleted(false);
+
+  auto side_panel_ui = std::make_unique<GlicSidePanelUi>(
+      profile(), tab(), delegate(), instance_metrics());
+  ASSERT_TRUE(coordinator.GetCoBrowseViews());
+
+  auto show_options = ShowOptions::ForSidePanel(*tab());
+  show_options.fre_override = mojom::FreOverride::kNativeFre;
+  side_panel_ui->Show(show_options);
+
+  EXPECT_TRUE(coordinator.GetCoBrowseViews()->IsShowingNativeFreForTesting());
+
+  // Transition via CreateInactiveEmbedder(), destroy the first
+  // GlicSidePanelUi, construct a new GlicSidePanelUi, and call Show with
+  // kUnspecified fre_override.
+  auto inactive_ui = side_panel_ui->CreateInactiveEmbedder();
+  side_panel_ui.reset();
+
+  auto new_side_panel_ui = std::make_unique<GlicSidePanelUi>(
+      profile(), tab(), delegate(), instance_metrics());
+  inactive_ui.reset();
+
+  new_side_panel_ui->Show(ShowOptions::ForSidePanel(*tab()));
+  EXPECT_TRUE(coordinator.GetCoBrowseViews()->IsShowingNativeFreForTesting());
+
+  // Completing FRE and showing again clears the native FRE latch.
+  SetFreCompleted(true);
+  new_side_panel_ui->Show(ShowOptions::ForSidePanel(*tab()));
+  EXPECT_FALSE(coordinator.GetCoBrowseViews()->IsShowingNativeFreForTesting());
+
+  // Consenting cleared the latch rather than only masking it.
+  SetFreCompleted(false);
+  EXPECT_FALSE(coordinator.GetCoBrowseViews()->IsShowingNativeFreForTesting());
+}
+
+class GlicSidePanelUiAndroidConsentTest : public GlicSidePanelUiAndroidTest {
+ public:
+  void SetUp() override {
+    GlicSidePanelUiAndroidTest::SetUp();
+    ASSERT_TRUE(profile_manager_.SetUp());
+
+    TestingProfile::TestingFactories factories =
+        IdentityTestEnvironmentProfileAdaptor::
+            GetIdentityTestEnvironmentFactories();
+    factories.push_back(
+        {GlicKeyedServiceFactory::GetInstance(),
+         base::BindRepeating(
+             [](ProfileManager* pm, GlicProfileManager* gpm,
+                content::BrowserContext* context)
+                 -> std::unique_ptr<KeyedService> {
+               Profile* p = Profile::FromBrowserContext(context);
+               return std::make_unique<GlicKeyedService>(
+                   p, IdentityManagerFactory::GetForProfile(p), pm, gpm,
+                   /*contextual_cueing_service=*/nullptr,
+                   /*actor_keyed_service=*/nullptr);
+             },
+             profile_manager_.profile_manager(), &glic_profile_manager_)});
+
+    keyed_profile_ =
+        profile_manager_.CreateTestingProfile("user", std::move(factories));
+    identity_adaptor_ =
+        std::make_unique<IdentityTestEnvironmentProfileAdaptor>(keyed_profile_);
+    ASSERT_TRUE(GlicKeyedServiceFactory::GetGlicKeyedService(keyed_profile_,
+                                                             /*create=*/true));
+
+    keyed_host_ = std::make_unique<FakeHost>(keyed_profile_);
+    keyed_delegate_ =
+        std::make_unique<FakeGlicUiEmbedderDelegate>(*keyed_host_);
+    keyed_metrics_ = std::make_unique<GlicInstanceMetrics>(
+        &keyed_profile_metrics_service_, keyed_profile_);
+
+    ON_CALL(keyed_tab_, GetProfile())
+        .WillByDefault(testing::Return(keyed_profile_));
+    ON_CALL(keyed_tab_, GetBrowserWindowInterface())
+        .WillByDefault(testing::Return(&browser_window()));
+  }
+
+  void TearDown() override {
+    keyed_metrics_.reset();
+    keyed_delegate_.reset();
+    keyed_host_.reset();
+    identity_adaptor_.reset();
+    keyed_profile_ = nullptr;
+    GlicSidePanelUiAndroidTest::TearDown();
+  }
+
+  TestingProfile* keyed_profile() { return keyed_profile_; }
+  GlicEnabling& enabling() {
+    return GlicKeyedService::Get(keyed_profile_)->enabling();
+  }
+  FakeHost& keyed_host() { return *keyed_host_; }
+  FakeGlicUiEmbedderDelegate& keyed_delegate() { return *keyed_delegate_; }
+  GlicInstanceMetrics& keyed_metrics() { return *keyed_metrics_; }
+  tabs::MockTabInterface& keyed_tab() { return keyed_tab_; }
+  base::WeakPtr<tabs::TabInterface> keyed_tab_weak_ptr() {
+    return keyed_tab_weak_factory_.GetWeakPtr();
+  }
+
+ private:
+  GlicEnabling::ScopedBypassEnablementChecksForTesting bypass_enablement_;
+  GlicProfileManager glic_profile_manager_;
+  TestingProfileManager profile_manager_{TestingBrowserProcess::GetGlobal()};
+  raw_ptr<TestingProfile> keyed_profile_ = nullptr;
+  std::unique_ptr<IdentityTestEnvironmentProfileAdaptor> identity_adaptor_;
+  metrics::ProfileMetricsService keyed_profile_metrics_service_;
+  std::unique_ptr<FakeHost> keyed_host_;
+  std::unique_ptr<FakeGlicUiEmbedderDelegate> keyed_delegate_;
+  std::unique_ptr<GlicInstanceMetrics> keyed_metrics_;
+  tabs::MockTabInterface keyed_tab_;
+  base::WeakPtrFactory<tabs::TabInterface> keyed_tab_weak_factory_{&keyed_tab_};
+};
+
+TEST_F(GlicSidePanelUiAndroidConsentTest,
+       ConsentInAnotherWindowClearsNativeFreAndRevealsLoadingPlaceholder) {
+  keyed_host().set_showing_native_loading(true);
+  FakeGlicSidePanelCoordinator coordinator(&keyed_tab());
+  enabling().SetCompletedFre(prefs::FreStatus::kNotStarted);
+
+  auto side_panel_ui = std::make_unique<GlicSidePanelUi>(
+      keyed_profile(), keyed_tab_weak_ptr(), keyed_delegate(), keyed_metrics());
+  GlicCoBrowseViews* views = coordinator.GetCoBrowseViews();
+  ASSERT_TRUE(views);
+
+  auto show_options = ShowOptions::ForSidePanel(keyed_tab());
+  show_options.fre_override = mojom::FreOverride::kNativeFre;
+  side_panel_ui->Show(show_options);
+
+  EXPECT_TRUE(views->IsShowingNativeFreForTesting());
+  EXPECT_FALSE(views->ShouldShowLoadingPlaceholderForTesting());
+
+  // Completing FRE on the profile (e.g. from another window) immediately clears
+  // the native FRE latch and reveals the loading placeholder without a re-show.
+  enabling().SetCompletedFre(prefs::FreStatus::kCompleted);
+
+  EXPECT_FALSE(views->IsShowingNativeFreForTesting());
+  EXPECT_TRUE(views->ShouldShowLoadingPlaceholderForTesting());
+
+  // Reverting the pref confirms the latch was cleared rather than masked.
+  enabling().SetCompletedFre(prefs::FreStatus::kNotStarted);
+  EXPECT_FALSE(views->IsShowingNativeFreForTesting());
+}
 }  // namespace glic

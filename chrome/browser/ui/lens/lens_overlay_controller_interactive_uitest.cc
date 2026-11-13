@@ -587,8 +587,6 @@ class LensOverlayControllerPromoTest : public LensOverlayControllerCUJTest {
          {media::kContextMenuSearchForVideoFrame, {}},
          {lens::features::kLensOverlayContextualSearchbox,
           {{"use-pdfs-as-context", "true"}, {"auto-focus-searchbox", "false"}}},
-         {contextual_tasks::kContextualTasksEphemeralBrandedEntryPoint,
-          {{"ContextualTasksEntryPoint", "toolbar-ephemeral-branded"}}},
          {contextual_tasks::kContextualTasksPinningV2, {}},
          {contextual_tasks::kEnableContextualTasksPinButtonInToolbar, {}},
          {contextual_tasks::kContextualTasksForceEntryPointEligibility, {}}},
@@ -620,7 +618,7 @@ IN_PROC_BROWSER_TEST_F(LensOverlayControllerPromoTest, ShowsPromo) {
       // Selecting a region should have opened the Contextual Tasks side panel
       // and shown the ephemeral toolbar button.
       WaitForShow(kContextualTasksSidePanelWebViewElementId),
-      WaitForShow(kContextualTasksEphemeralToolbarButtonElementId),
+      WaitForShow(kPinnedToolbarActionShowSidePanelContextualTasksElementId),
 
       // Show the pinnable Contextual Tasks IPH promo anchored to the ephemeral
       // toolbar button.

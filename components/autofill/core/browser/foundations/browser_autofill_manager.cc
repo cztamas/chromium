@@ -1784,15 +1784,21 @@ void BrowserAutofillManager::GenerateFooter(
     base::ScopedClosureRunner scoped_on_after,
     bool show_suggestions,
     std::vector<Suggestion> suggestions) {
-  std::vector<Suggestion> passkey_suggestions =
-      CreatePasskeySuggestionsForMerge(field);
-  if (!passkey_suggestions.empty()) {
-    base::Extend(suggestions, std::move(passkey_suggestions));
+  const FillingProductSet relevant_filling_products =
+      GetFillingProductsToSuggest(trigger_source);
+  if (relevant_filling_products.contains(FillingProduct::kPasskey)) {
+    std::vector<Suggestion> passkey_suggestions =
+        CreatePasskeySuggestionsForMerge(field);
+    if (!passkey_suggestions.empty()) {
+      base::Extend(suggestions, std::move(passkey_suggestions));
+    }
   }
-  std::vector<Suggestion> trusted_vault_suggestions =
-      CreateTrustedVaultUnlockSuggestionsForMerge(field);
-  if (!trusted_vault_suggestions.empty()) {
-    base::Extend(suggestions, std::move(trusted_vault_suggestions));
+  if (relevant_filling_products.contains(FillingProduct::kPassword)) {
+    std::vector<Suggestion> trusted_vault_suggestions =
+        CreateTrustedVaultUnlockSuggestionsForMerge(field);
+    if (!trusted_vault_suggestions.empty()) {
+      base::Extend(suggestions, std::move(trusted_vault_suggestions));
+    }
   }
 
   OnGenerateSuggestionsComplete(
@@ -3426,7 +3432,8 @@ std::vector<Suggestion> BrowserAutofillManager::GetAvailableSuggestions(
       break;
     case FillingProduct::kOneTimePassword:
       if (client().IsContextSecure()) {
-        suggestions = BuildOtpSuggestions(one_time_tokens);
+        suggestions =
+            BuildOtpSuggestions(GetOtpsToSuggest(one_time_tokens, field));
       }
       break;
     case FillingProduct::kAtMemory:
@@ -3559,7 +3566,9 @@ void BrowserAutofillManager::InitializeSuggestionGenerators(
     suggestion_generators_.push_back(
         std::make_unique<AutofillAiSuggestionGenerator>());
   }
-  if (relevant_filling_products.contains(FillingProduct::kIban)) {
+  if (relevant_filling_products.contains(FillingProduct::kIban) &&
+      client().GetPaymentsAutofillClient() &&
+      client().GetPaymentsAutofillClient()->GetIbanManager()) {
     suggestion_generators_.push_back(
         std::make_unique<IbanSuggestionGenerator>());
   }

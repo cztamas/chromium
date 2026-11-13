@@ -2163,6 +2163,10 @@ chromium-metrics-reviews@google.com.
 
     Logged each time the Sec-GPC header is attached to an outgoing request,
     during request finalization. Subsampled to one out of one thousand times.
+    For `Prefetch`, this is logged during prefetch header preparation (including
+    for decoy prefetches and `PrePrefetch` header pre-calculations that may not
+    result in a network request), and a served prefetch will also record
+    `FrameNavigation` upon navigation.
   </summary>
 </histogram>
 
@@ -5134,20 +5138,6 @@ chromium-metrics-reviews@google.com.
     Connection-Allowlist-Report-Only headers. This is recorded when the network
     restrictions throttles are executed for either navigations or worker
     scripts, immediately before the allowlist takes effect.
-  </summary>
-</histogram>
-
-<histogram name="NetworkService.CorsPreflightMethodAllowed"
-    enum="NetworkServiceCorsPreflightMethodAllowed" expires_after="2023-06-18">
-  <owner>hiroshige@chromium.org</owner>
-  <owner>toyoshim@chromium.org</owner>
-  <summary>
-    Whether method or normalized method are allowed in CORS preflight request in
-    PreflightResult::EnsureAllowedCrossOriginMethod(), to measure the impact of
-    https://crbug.com/1228178.
-
-    Logged for preflight requests that have method checked (i.e. those without
-    errors before EnsureAllowedCrossOriginMethod).
   </summary>
 </histogram>
 

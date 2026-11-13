@@ -2499,6 +2499,8 @@ source_set("browser") {
     "//chrome/browser/profiles:renderer_updater",
     "//chrome/browser/push_messaging",
     "//chrome/browser/push_messaging:impl",
+    "//chrome/browser/readaloud",
+    "//chrome/browser/readaloud:impl",
     "//chrome/browser/reader_mode",
     "//chrome/browser/reader_mode:impl",
     "//chrome/browser/reading_list",
@@ -3619,7 +3621,6 @@ source_set("browser") {
       "//chrome/browser/chromeos/extensions/login_screen/login/cleanup",
       "//chrome/browser/chromeos/extensions/vpn_provider",
       "//chrome/browser/chromeos/gemini_app",
-      "//chrome/browser/chromeos/platform_keys",
       "//chrome/browser/chromeos/policy/dlp",
       "//chrome/browser/media_galleries",
       "//chrome/browser/media_galleries:impl",
@@ -3861,7 +3862,6 @@ source_set("browser") {
       "//chrome/browser/win:impl",
       "//chrome/browser/win:jumplist",
       "//components/app_launch_prefetch",
-      "//services/webnn/public/cpp:buildflags",
       "//third_party/wtl",
     ]
   }
@@ -5170,6 +5170,9 @@ source_set("core_unit_tests") {
       "//chrome/browser/policy:system_features_disable_list",
       "//chromeos/components/kiosk",
       "//chromeos/components/kiosk:test_support",
+      "//components/metrics",
+      "//components/metrics:test_support",
+      "//components/variations:test_support",
     ]
   }
 

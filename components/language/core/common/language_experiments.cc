@@ -11,8 +11,6 @@ BASE_FEATURE(kCctAutoTranslate,
              "CCTAutoTranslate",
              base::FEATURE_ENABLED_BY_DEFAULT);
 
-BASE_FEATURE(kTranslateOpenSettings, base::FEATURE_ENABLED_BY_DEFAULT);
-
 BASE_FEATURE(kDisableGeoLanguageModel, base::FEATURE_ENABLED_BY_DEFAULT);
 
 BASE_FEATURE(kGmsCoreUlp, base::FEATURE_DISABLED_BY_DEFAULT);
@@ -29,5 +27,7 @@ BASE_FEATURE_PARAM(int,
                    &kReduceAcceptLanguageCount,
                    /*name=*/"MaxAcceptLanguage",
                    /*default_value=*/10);
+
+BASE_FEATURE(kGrammaticalGenderLocalization, base::FEATURE_DISABLED_BY_DEFAULT);
 
 }  // namespace language

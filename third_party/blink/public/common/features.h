@@ -1620,6 +1620,10 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kSetIntervalWithoutClamp);
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(
     kSetSelectionForAccessibilityHandlingInputEvent);
 
+// Enables single-allocation SIMD UTF-8 decoding in TextCodecUtf8::Decode via
+// simdutf.
+BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kSimdutfTextCodecUtf8Decode);
+
 // When enabled, RemoteFrame::DidStopLoading() skips sending a redundant
 // RemoteFrameHost::CheckCompleted() IPC when the parent in the current renderer
 // process is also a RemoteFrame, walking ancestors in-process instead to notify
@@ -1713,6 +1717,10 @@ BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE_PARAM(
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE_PARAM(
     bool,
     kServiceWorkerSyntheticResponseRefreshHeaderOnMismatch);
+
+BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE_PARAM(
+    bool,
+    kServiceWorkerSyntheticResponseCaptureInterceptedHeaders);
 
 BLINK_COMMON_EXPORT BASE_DECLARE_FEATURE(kBoostRenderProcessForLoading);
 

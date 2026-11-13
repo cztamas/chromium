@@ -15,6 +15,7 @@ AddNewAddressProfileTest.*
 AppInfoDialogBrowserTest.*
 AppMenuAiRingBrowserTest*.InvokeUi_*
 AppMenuBrowserTest*.InvokeUi_*
+AppMenuOtherDeviceTabs*.*
 AskGoogleForSuggestionsDialogTest.*
 *AutofillAiImportDataBubbleViewBrowsertest.*
 BatchUploadDialogViewPixelTest.*
@@ -176,6 +177,7 @@ SplitTabButtonInteractiveTest.ButtonUpdatesOnSplit
 SyncPassphraseDialogBrowserTest.*
 TabDialogManagerPixelTest.*
 TabGroupEditorBubbleViewDialogBrowserTest.*
+TabGroupEditorBubbleViewPixelBrowserTest.*
 TabGroupShortcutsInteractiveTest.Screenshot*
 TabHoverCardBubbleViewDialogBrowserTest.*
 TabSearchBubbleUIBrowserTest.*

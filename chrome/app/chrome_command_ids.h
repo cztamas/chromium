@@ -52,6 +52,7 @@
 #define IDC_SELECT_TAB_6                34024
 #define IDC_SELECT_TAB_7                34025
 #define IDC_SELECT_LAST_TAB             34026
+#define IDC_SELECT_LAST_ACTIVE_TAB      34068
 #define IDC_DUPLICATE_TAB               34027
 #define IDC_RESTORE_TAB                 34028
 #define IDC_SHOW_AS_TAB                 34029
@@ -259,7 +260,6 @@
 #define IDC_SHOW_READING_MODE           40273
 #define IDC_SHOW_BOOKMARK_SIDE_PANEL    40274
 #define IDC_SHOW_CHROME_LABS            40276
-#define IDC_RECENT_TABS_LOGIN_FOR_DEVICE_TABS  40277
 #define IDC_OPEN_RECENT_TAB             40278
 #define IDC_OPEN_SAFETY_HUB             40279
 #define IDC_SAFETY_HUB_SHOW_PASSWORD_CHECKUP  40280

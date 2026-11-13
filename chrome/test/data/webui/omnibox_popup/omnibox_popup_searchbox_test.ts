@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 import {isMac} from '//resources/js/platform.js';
-import {MatchesUpdate, OmniboxEscapeAction, omniboxPopupBrowserProxyFactory, OmniboxPopupPageHandlerRemote, sanitizeTextForPaste, SearchboxBrowserProxy, stripJavascriptSchemas, UrlDeemphasisMode} from 'chrome://omnibox-popup.top-chrome/omnibox_popup_full.js';
+import {MatchesUpdate, OmniboxEscapeAction, omniboxPopupBrowserProxyFactory, OmniboxPopupPageHandlerRemote, PlaceholderType, sanitizeTextForPaste, SearchboxBrowserProxy, stripJavascriptSchemas, UrlDeemphasisMode} from 'chrome://omnibox-popup.top-chrome/omnibox_popup_full.js';
 import type {OmniboxInputState, OmniboxPopupContextualEntrypointButtonElement, OmniboxPopupPageRemote, OmniboxPopupSearchboxElement, UrlEmphasis} from 'chrome://omnibox-popup.top-chrome/omnibox_popup_full.js';
 import {KeywordModeEntryMethod} from 'chrome://resources/cr_components/searchbox/keyword_mode_manager.js';
 import {createAutocompleteResultForTesting, createMatchKeywordModelForTesting, createSearchMatchForTesting} from 'chrome://resources/cr_components/searchbox/searchbox_browser_proxy.js';
@@ -81,8 +81,10 @@ function createDefaultOmniboxInputState(overrides?: Partial<OmniboxInputState>):
 }
 
 // Returns how far `offset` is from the start of `input`'s text, measured with
-// the input's font. Only valid for LTR text.
-function getTextOffsetLeft(
+// the input's font: from its left edge for LTR text, or from its right edge for
+// RTL text. Only valid for text in a single direction, e.g. not for an Arabic
+// query that contains a URL.
+function getTextOffsetFromStart(
     input: HTMLInputElement|HTMLTextAreaElement, offset: number): number {
   const style = getComputedStyle(input);
   const context = document.createElement('canvas').getContext('2d')!;
@@ -103,16 +105,21 @@ function getVisibleTextWidth(input: HTMLInputElement|HTMLTextAreaElement):
 }
 
 // Asserts that `offset` is inside the part of `input` that is scrolled into
-// view, allowing 1px for rounding.
+// view, allowing 1px for rounding. Like `getTextOffsetFromStart()`, measures
+// from the start of the text, which is on the right in an RTL input, whose
+// scroll offsets are negative (towards the end of the text, on the left).
 function assertTextOffsetVisible(
     input: HTMLInputElement|HTMLTextAreaElement, offset: number) {
   const visibleWidth = getVisibleTextWidth(input);
-  const offsetLeft = getTextOffsetLeft(input, offset);
+  const offsetFromStart = getTextOffsetFromStart(input, offset);
+  const scrolled = getComputedStyle(input).direction === 'rtl' ?
+      -input.scrollLeft :
+      input.scrollLeft;
   assertTrue(
-      offsetLeft >= input.scrollLeft - 1 &&
-          offsetLeft <= input.scrollLeft + visibleWidth + 1,
-      `offset at ${offsetLeft}px is outside the visible ${
-          input.scrollLeft}px to ${input.scrollLeft + visibleWidth}px`);
+      offsetFromStart >= scrolled - 1 &&
+          offsetFromStart <= scrolled + visibleWidth + 1,
+      `offset at ${offsetFromStart}px is outside the visible ${scrolled}px to ${
+          scrolled + visibleWidth}px`);
 }
 
 // Returns where `element` is painted relative to the #mirror `mirror`.
@@ -153,6 +160,8 @@ suite('OmniboxPopupSearchboxTest', function() {
       addContext: 'Add tabs and more',
       contextButtonShapeIsOblong: false,
       contextualMenuUsePecApi: false,
+      omniboxSearchOrTypeUrlPlaceholder: 'Search $1 or type a URL',
+      omniboxAskOrTypeUrlPlaceholder: 'Ask $1 or type a URL',
     });
     testProxy = new TestSearchboxBrowserProxy();
     SearchboxBrowserProxy.setInstance(testProxy);
@@ -392,6 +401,51 @@ suite('OmniboxPopupSearchboxTest', function() {
       assertTrue(viaKeyboard);
     }
   });
+
+  test(
+      'CtrlEnterInKeywordModeSubmitsVerbatimMatchWhenNoMatchSelected',
+      async () => {
+        for (const virtualFocus of [false, true]) {
+          loadTimeData.overrideValues(
+              {realboxVirtualFocusNavigation: virtualFocus});
+          searchbox.virtualFocusEnabled = virtualFocus;
+          testProxy.handler.resetResolver('openAutocompleteMatch');
+
+          callbackRouter.setInputState(createDefaultOmniboxInputState({
+            text: '',
+            userInputInProgress: true,
+            isFocused: true,
+            keywordModel: {
+              type: KeywordType.kInKeyword,
+              keyword: 'youtube.com',
+              displayText: 'Search YouTube',
+              iconPath: '',
+              placeholder: '',
+            },
+          }));
+          await microtasksFinished();
+          assertTrue(searchbox.inKeywordMode);
+          assertEquals(-1, searchbox.selectedMatchIndex);
+
+          await searchbox.handleKeyNavigation(new KeyboardEvent('keydown', {
+            key: 'Enter',
+            ctrlKey: true,
+            cancelable: true,
+          }));
+          await microtasksFinished();
+
+          assertEquals(0, testProxy.handler.getCallCount('openPopupSelection'));
+          assertEquals(
+              0,
+              testProxy.handler.getCallCount(
+                  'openPopupSelectionWithDisposition'));
+          const [, line, , , , modifiers, viaKeyboard] =
+              await testProxy.handler.whenCalled('openAutocompleteMatch');
+          assertEquals(-1, line);
+          assertTrue(modifiers.ctrlKey);
+          assertTrue(viaKeyboard);
+        }
+      });
 
   test('HandlesSelectionChange', async () => {
     // Focus the input so it's the active element.
@@ -1797,7 +1851,8 @@ suite('OmniboxPopupSearchboxTest', function() {
     // A drag in the unfocused native omnibox over the start of its text, which
     // it showed unscrolled.
     const end = 20;
-    assertTrue(getTextOffsetLeft(input, end) + 1 < getVisibleTextWidth(input));
+    assertTrue(
+        getTextOffsetFromStart(input, end) + 1 < getVisibleTextWidth(input));
     callbackRouter.setInputState(createDefaultOmniboxInputState({
       sequenceNumber: 2,
       text,
@@ -1863,7 +1918,8 @@ suite('OmniboxPopupSearchboxTest', function() {
     // That is, just far enough to show the caret (and its 1px) at the end of
     // the visible text, which the AIM button padding doesn't count towards.
     assertFalse(isVisible(searchbox.$.composeButton));
-    const caretRight = getTextOffsetLeft(input, end) + 1 - input.scrollLeft;
+    const caretRight =
+        getTextOffsetFromStart(input, end) + 1 - input.scrollLeft;
     assertTrue(
         Math.abs(getVisibleTextWidth(input) - caretRight) <= 1,
         `caret at ${caretRight}px, visible width ${
@@ -1886,7 +1942,8 @@ suite('OmniboxPopupSearchboxTest', function() {
     const start = 100;
     const end = text.length - 10;
     assertTrue(
-        getTextOffsetLeft(input, end) - getTextOffsetLeft(input, start) >
+        getTextOffsetFromStart(input, end) -
+            getTextOffsetFromStart(input, start) >
         getVisibleTextWidth(input));
     callbackRouter.setInputState(createDefaultOmniboxInputState({
       sequenceNumber: 2,
@@ -1901,7 +1958,7 @@ suite('OmniboxPopupSearchboxTest', function() {
     // The caret stays in view, as in the native omnibox, so the selection
     // start can't be.
     assertTextOffsetVisible(input, end);
-    assertTrue(getTextOffsetLeft(input, start) < input.scrollLeft - 1);
+    assertTrue(getTextOffsetFromStart(input, start) < input.scrollLeft - 1);
   });
 
   test('SetInputStateKeepsBackwardSelection', async () => {
@@ -2567,13 +2624,18 @@ suite('OmniboxPopupSearchboxTest', function() {
   });
 
  test('ComputePlaceholderText_OnTabSwitchAndStateReset', async () => {
+   callbackRouter.setDefaultSearchProvider(
+       '//resources/cr_components/searchbox/icons/google_g_gradient.svg',
+       PlaceholderType.kAskOrTypeUrl, 'Google');
+
    // Initial NTP tab state (empty input, empty `permanentDisplayText`,
    // unfocused).
    callbackRouter.setInputState(createDefaultOmniboxInputState());
    await microtasksFinished();
    await searchbox.$.input.updateComplete;
 
-   // Placeholder must always be empty.
+   // Placeholder must be empty while the AIM button doesn't have focus, even
+   // with a DSE placeholder, to avoid flickering on tab switch.
    assertEquals('', searchbox.$.input.inputElement.placeholder);
 
    // Switch to regular URL tab (permanentDisplayText set, focused).
@@ -2588,8 +2650,117 @@ suite('OmniboxPopupSearchboxTest', function() {
    await microtasksFinished();
    await searchbox.$.input.updateComplete;
 
-   // Placeholder must always be empty.
+   // Placeholder must be empty while the AIM button doesn't have focus.
    assertEquals('', searchbox.$.input.inputElement.placeholder);
+ });
+
+ // Tabbing from the empty input to the AIM button shows the DSE placeholder in
+ // the blurred input, like the Views omnibox does when the AIM button takes
+ // focus. Shift+Tab back to the input clears it again.
+ test('TabKeyToAimButtonShowsDsePlaceholder', async () => {
+   const dsePlaceholder = 'Ask Google or type a URL';
+   callbackRouter.setDefaultSearchProvider(
+       '//resources/cr_components/searchbox/icons/google_g_gradient.svg',
+       PlaceholderType.kAskOrTypeUrl, 'Google');
+   searchbox.dropdownIsVisible = false;
+   searchbox.focusInput();
+   testProxy.page.setAimButtonVisible(true);
+   await microtasksFinished();
+   await searchbox.$.input.updateComplete;
+
+   const input = searchbox.$.input.inputElement;
+   assertEquals(searchbox.$.input, searchbox.shadowRoot.activeElement);
+   assertEquals('', input.placeholder);
+
+   await searchbox.handleKeyNavigation(new KeyboardEvent('keydown', {
+     key: 'Tab',
+     cancelable: true,
+     bubbles: true,
+   }));
+   await microtasksFinished();
+   await searchbox.$.input.updateComplete;
+
+   assertEquals(searchbox.$.composeButton, searchbox.shadowRoot.activeElement);
+   assertEquals(dsePlaceholder, input.placeholder);
+   assertTrue(input.matches(':placeholder-shown'));
+   assertEquals('visible', getComputedStyle(input, '::placeholder').visibility);
+
+   await searchbox.handleKeyNavigation(new KeyboardEvent('keydown', {
+     key: 'Tab',
+     shiftKey: true,
+     cancelable: true,
+     bubbles: true,
+   }));
+   await microtasksFinished();
+   await searchbox.$.input.updateComplete;
+
+   assertEquals(searchbox.$.input, searchbox.shadowRoot.activeElement);
+   assertEquals('', input.placeholder);
+ });
+
+ // A tab switch moves focus away from the AIM button, which must clear the
+ // placeholder so it doesn't show on the new tab.
+ test('AimButtonBlurClearsDsePlaceholder', async () => {
+   const dsePlaceholder = 'Ask Google or type a URL';
+   callbackRouter.setDefaultSearchProvider(
+       '//resources/cr_components/searchbox/icons/google_g_gradient.svg',
+       PlaceholderType.kAskOrTypeUrl, 'Google');
+   searchbox.dropdownIsVisible = false;
+   testProxy.page.setAimButtonVisible(true);
+   await microtasksFinished();
+
+   searchbox.$.composeButton.focus();
+   await microtasksFinished();
+   await searchbox.$.input.updateComplete;
+   assertEquals(dsePlaceholder, searchbox.$.input.inputElement.placeholder);
+
+   searchbox.$.composeButton.blur();
+   callbackRouter.setInputState(createDefaultOmniboxInputState({
+     sequenceNumber: 2,
+     tabId: 2,
+     isTabSwitch: true,
+   }));
+   await microtasksFinished();
+   await searchbox.$.input.updateComplete;
+   assertEquals('', searchbox.$.input.inputElement.placeholder);
+ });
+
+ // The placeholder must also clear when the popup loses focus, is hidden, or
+ // hides the AIM button while the AIM button has focus.
+ [{
+   name: 'SetFocusFalse',
+   action: () => callbackRouter.setFocus(
+       /*isFocused=*/ false, /*queryZps=*/ false, /*selectAll=*/ false,
+       /*showFullUrl=*/ false),
+ },
+  {
+    name: 'ClearPopup',
+    action: () => callbackRouter.clearPopup(),
+  },
+  {
+    name: 'SetAimButtonVisibleFalse',
+    action: () => testProxy.page.setAimButtonVisible(false),
+  },
+ ].forEach(({name, action}) => {
+   test(`DsePlaceholderClearsOn${name}`, async () => {
+     const dsePlaceholder = 'Ask Google or type a URL';
+     callbackRouter.setDefaultSearchProvider(
+         '//resources/cr_components/searchbox/icons/google_g_gradient.svg',
+         PlaceholderType.kAskOrTypeUrl, 'Google');
+     searchbox.dropdownIsVisible = false;
+     testProxy.page.setAimButtonVisible(true);
+     await microtasksFinished();
+
+     searchbox.$.composeButton.focus();
+     await microtasksFinished();
+     await searchbox.$.input.updateComplete;
+     assertEquals(dsePlaceholder, searchbox.$.input.inputElement.placeholder);
+
+     action();
+     await microtasksFinished();
+     await searchbox.$.input.updateComplete;
+     assertEquals('', searchbox.$.input.inputElement.placeholder);
+   });
  });
 
  test('TabSwitchInputStateIsolationAndReset', async () => {
@@ -3575,6 +3746,47 @@ suite('OmniboxPopupSearchboxTest', function() {
          assertEquals(testUrl, queryText);
          assertTrue(isOnFocus);
        });
+
+   test(`${name}_DiscardsPendingResults`, async () => {
+     callbackRouter.setInputState(createDefaultOmniboxInputState({
+       text: '',
+       isFocused: true,
+     }));
+     await microtasksFinished();
+
+     // Type 'youtub' and press the shortcut before its results arrive.
+     const inputEl = searchbox.getInputElement().inputElement;
+     inputEl.value = 'youtub';
+     inputEl.setSelectionRange(6, 6);
+     inputEl.dispatchEvent(
+         new InputEvent('input', {bubbles: true, composed: true}));
+     await microtasksFinished();
+     const queryId = searchbox.activeQueryId;
+     inputEl.dispatchEvent(new KeyboardEvent('keydown', {
+       ...eventInit,
+       bubbles: true,
+       composed: true,
+     }));
+     await microtasksFinished();
+     assertEquals(0, inputEl.selectionStart);
+     assertEquals(6, inputEl.selectionEnd);
+
+     // The pending results are discarded, so their inline autocompletion
+     // doesn't replace the selection and they don't open the dropdown.
+     searchbox.onAutocompleteResultChanged(createAutocompleteResultForTesting({
+       queryId,
+       input: 'youtub',
+       matches: [createSearchMatchForTesting({
+         allowedToBeDefaultMatch: true,
+         inlineAutocompletion: 'e.com',
+       })],
+     }));
+     await microtasksFinished();
+     assertEquals('youtub', inputEl.value);
+     assertEquals(0, inputEl.selectionStart);
+     assertEquals(6, inputEl.selectionEnd);
+     assertFalse(searchbox.dropdownIsVisible);
+   });
 
    test(`${name}_DoesNotRequeryZpsWhenDropdownAlreadyOpen`, async () => {
      const testUrl = 'https://example.com';
@@ -5048,9 +5260,34 @@ suite('OmniboxPopupSearchboxTest', function() {
    test('HandlesSetDefaultSearchProvider', async () => {
      const customIcon =
          'chrome://favicon2/?iconUrl=https%3A%2F%2Fexample.com%2Ffavicon.ico';
-     callbackRouter.setDefaultSearchProvider(customIcon);
+     callbackRouter.setDefaultSearchProvider(
+         customIcon, PlaceholderType.kSearchOrTypeUrl, 'Example');
      await microtasksFinished();
+     await searchbox.$.input.updateComplete;
      assertEquals(customIcon, searchbox.$.input.searchboxIcon);
+     // The DSE placeholder is only used while the AIM button has focus.
+     assertEquals('', searchbox.$.input.placeholderText);
+     testProxy.page.setAimButtonVisible(true);
+     await microtasksFinished();
+     searchbox.$.composeButton.focus();
+     await microtasksFinished();
+     await searchbox.$.input.updateComplete;
+     // The WebUI localizes the placeholder from its type.
+     assertEquals(
+         'Search Example or type a URL', searchbox.$.input.placeholderText);
+
+     callbackRouter.setDefaultSearchProvider(
+         customIcon, PlaceholderType.kAskOrTypeUrl, 'Google');
+     await microtasksFinished();
+     await searchbox.$.input.updateComplete;
+     assertEquals(
+         'Ask Google or type a URL', searchbox.$.input.placeholderText);
+
+     callbackRouter.setDefaultSearchProvider(
+         customIcon, PlaceholderType.kNone, '');
+     await microtasksFinished();
+     await searchbox.$.input.updateComplete;
+     assertEquals('', searchbox.$.input.placeholderText);
    });
  });
 
@@ -6775,7 +7012,8 @@ suite('OmniboxPopupSearchboxTest', function() {
      assertTextOffsetVisible(input, caret);
      // Scrolled only as far as needed, so the caret sits at the end of the
      // visible text.
-     const caretRight = getTextOffsetLeft(input, caret) + 1 - input.scrollLeft;
+     const caretRight =
+         getTextOffsetFromStart(input, caret) + 1 - input.scrollLeft;
      assertTrue(
          Math.abs(getVisibleTextWidth(input) - caretRight) <= 1,
          `caret at ${caretRight}px, visible width ${
@@ -6955,17 +7193,22 @@ suite('OmniboxPopupSearchboxTest', function() {
    await microtasksFinished();
  }
 
- function assertMirrorAlignedWithInput(uiDir: string, step: string) {
+ // `textDir` is the direction of the text: LTR or RTL.
+ function assertMirrorAlignedWithInput(
+     uiDir: string, step: string, textDir = 'ltr') {
    const input = searchbox.$.input.inputElement;
    const mirror = $$<HTMLElement>(searchbox.$.input, '#mirror');
    assertTrue(!!mirror, step);
    assertTrue(isVisible(mirror), step);
-   // The UI direction applies to the container, while the URL itself is laid
-   // out LTR.
+   // The UI direction applies to the container, while the text itself is laid
+   // out in its own direction.
    assertEquals(uiDir, getComputedStyle(mirror.parentElement!).direction, step);
-   assertEquals('ltr', getComputedStyle(input).direction, step);
-   assertEquals('ltr', getComputedStyle(mirror).direction, step);
-   assertTrue(input.scrollLeft > 0, `${step}: input should be scrolled`);
+   assertEquals(textDir, getComputedStyle(input).direction, step);
+   assertEquals(textDir, getComputedStyle(mirror).direction, step);
+   // An RTL input scrolls towards the end of its text with negative offsets.
+   assertTrue(
+       textDir === 'rtl' ? input.scrollLeft < 0 : input.scrollLeft > 0,
+       `${step}: input should be scrolled`);
 
    const iconRect = searchbox.$.input.$.icon.getBoundingClientRect();
    const inputRect = input.getBoundingClientRect();
@@ -7129,6 +7372,229 @@ suite('OmniboxPopupSearchboxTest', function() {
            await assertMirrorTextClippedLikeInput('caret at end');
            assertEquals(aimButtonVisible, isVisible(searchbox.$.composeButton));
          });
+   });
+ });
+
+ // Returns the dispatched event. Note that the key's default action doesn't
+ // run for a synthetic event, so tests check that it was prevented instead.
+ function dispatchKeydown(init: KeyboardEventInit): KeyboardEvent {
+   const event = new KeyboardEvent(
+       'keydown', {bubbles: true, cancelable: true, composed: true, ...init});
+   searchbox.$.input.inputElement.dispatchEvent(event);
+   return event;
+ }
+
+ // Clicking into the omnibox selects all of the URL and shows its start.
+ // ArrowRight and End then collapse the selection to the end of the URL
+ // (unelided, if it was elided), which must scroll into view so that the
+ // caret is visible. The #mirror must follow.
+ ['ArrowRight', 'End'].forEach(key => {
+   [true, false].forEach(elided => {
+     ['ltr', 'rtl'].forEach(uiDir => {
+       test(
+           `${key}OnSelectedLongUrlScrollsCaretAtEndIntoView_${
+               elided ? 'Elided' : 'Unelided'}_${uiDir.toUpperCase()}`,
+           async () => {
+             searchbox.dir = uiDir;
+             const prefix = 'https://www.';
+             const fullUrl = prefix + 'example.com/' +
+                 'foo/bar/baz/eggs/spam/'.repeat(20);
+             const text = elided ? fullUrl.substring(prefix.length) : fullUrl;
+             // Emphasizes the host, "www.example.com" or "example.com".
+             const urlEmphasis = (url: string) => {
+               const hostStart = url.startsWith(prefix) ? 'https://'.length : 0;
+               return {
+                 deemphasisMode: UrlDeemphasisMode.kAllButHost,
+                 textIsUrl: true,
+                 schemeRange: {start: 0, end: hostStart ? 'https'.length : 0},
+                 hostRange:
+                     {start: hostStart, end: url.indexOf('/', hostStart)},
+                 schemeStrikeThrough: false,
+                 schemeDangerous: false,
+               };
+             };
+             callbackRouter.setInputState(createDefaultOmniboxInputState({
+               text,
+               fullUrl,
+               urlEmphasis: urlEmphasis(text),
+               unelidedUrlEmphasis: urlEmphasis(fullUrl),
+               selection: {start: 0, end: text.length},
+               isFocused: true,
+             }));
+             await microtasksFinished();
+             const input = searchbox.$.input.inputElement;
+             input.focus();
+             assertEquals(text, input.value);
+             assertTrue(input.scrollWidth > input.clientWidth);
+             assertEquals(0, input.scrollLeft);
+
+             dispatchKeydown({key});
+             // Let the input's scroll event sync the #mirror.
+             await microtasksFinished();
+             await new Promise(resolve => requestAnimationFrame(resolve));
+
+             assertEquals(fullUrl, input.value);
+             assertEquals(fullUrl.length, input.selectionStart);
+             assertEquals(fullUrl.length, input.selectionEnd);
+             assertTextOffsetVisible(input, fullUrl.length);
+             assertMirrorAlignedWithInput(uiDir, `after ${key}`);
+           });
+     });
+   });
+ });
+
+ // An RTL query (e.g. in Arabic) gets an RTL input (via dir="auto"), whatever
+ // the UI direction, which shows the end of its text, on the left, at its most
+ // negative scroll offset.
+ ['ArrowRight', 'End'].forEach(key => {
+   ['ltr', 'rtl'].forEach(uiDir => {
+     test(
+         `${key}OnSelectedLongRtlQueryScrollsCaretAtEndIntoView_${
+             uiDir.toUpperCase()}`,
+         async () => {
+           searchbox.dir = uiDir;
+           // "Open new tab", repeated so that it overflows the input.
+           const text = 'افتح علامة تبويب جديدة '.repeat(15).trim();
+           callbackRouter.setInputState(createDefaultOmniboxInputState({
+             text,
+             userInputInProgress: true,
+             selection: {start: 0, end: text.length},
+             isFocused: true,
+           }));
+           await microtasksFinished();
+           const input = searchbox.$.input.inputElement;
+           input.focus();
+           assertEquals(text, input.value);
+           assertEquals('rtl', getComputedStyle(input).direction);
+           assertTrue(input.scrollWidth > input.clientWidth);
+           assertEquals(0, input.scrollLeft);
+
+           dispatchKeydown({key});
+           // Let the input's scroll event sync the #mirror.
+           await microtasksFinished();
+           await new Promise(resolve => requestAnimationFrame(resolve));
+
+           assertEquals(text.length, input.selectionStart);
+           assertEquals(text.length, input.selectionEnd);
+           assertTextOffsetVisible(input, text.length);
+           assertMirrorAlignedWithInput(
+               uiDir, `after ${key}`, /*textDir=*/ 'rtl');
+         });
+   });
+ });
+
+ // Like in the native omnibox (`OmniboxViewViews`), ArrowLeft collapses a
+ // select-all of an elided URL to the start of the elided URL within the
+ // unelided one, i.e. after the elided prefix, while Home collapses it to the
+ // very start.
+ [{key: 'ArrowLeft', caret: 'https://www.'.length},
+  {key: 'Home', caret: 0},
+ ].forEach(({key, caret}) => {
+   test(`${key}OnSelectedElidedUrlUnelidesWithCaretAt${caret}`, async () => {
+     const elidedText = 'example.com/' +
+         'foo/bar/baz/eggs/spam/'.repeat(20);
+     const fullUrl = 'https://www.' + elidedText;
+     callbackRouter.setInputState(createDefaultOmniboxInputState({
+       text: elidedText,
+       fullUrl,
+       selection: {start: 0, end: elidedText.length},
+       isFocused: true,
+     }));
+     await microtasksFinished();
+     const input = searchbox.$.input.inputElement;
+     input.focus();
+     assertEquals(elidedText, input.value);
+     assertTrue(input.scrollWidth > input.clientWidth);
+     assertEquals(0, input.scrollLeft);
+
+     const keydown = dispatchKeydown({key});
+     await microtasksFinished();
+
+     assertEquals(fullUrl, input.value);
+     assertEquals(caret, input.selectionStart);
+     assertEquals(caret, input.selectionEnd);
+     // ArrowLeft's default action would move the caret one more character to
+     // the left, before the last "." of "https://www.", while Home's has
+     // nowhere to move it.
+     assertEquals(key === 'ArrowLeft', keydown.defaultPrevented);
+     assertEquals(0, input.scrollLeft);
+     assertTextOffsetVisible(input, caret);
+   });
+ });
+
+ // An intranet URL's elided form isn't always a substring of it, e.g.
+ // "https://foobar" is elided to "foobar/".
+ test('ArrowLeftOnSelectedElidedIntranetUrlPutsCaretAfterPrefix', async () => {
+   callbackRouter.setInputState(createDefaultOmniboxInputState({
+     text: 'foobar/',
+     fullUrl: 'https://foobar',
+     selection: {start: 0, end: 'foobar/'.length},
+     isFocused: true,
+   }));
+   await microtasksFinished();
+   const input = searchbox.$.input.inputElement;
+   input.focus();
+
+   const keydown = dispatchKeydown({key: 'ArrowLeft'});
+   await microtasksFinished();
+
+   assertEquals('https://foobar', input.value);
+   assertEquals('https://'.length, input.selectionStart);
+   assertEquals('https://'.length, input.selectionEnd);
+   assertTrue(keydown.defaultPrevented);
+ });
+
+ // Keys with modifiers (e.g. Alt+Left, which goes back) still collapse the
+ // selection to the very start, and keep their default action.
+ test('AltArrowLeftOnSelectedElidedUrlKeepsDefaultAction', async () => {
+   const elidedText = 'example.com/foo';
+   callbackRouter.setInputState(createDefaultOmniboxInputState({
+     text: elidedText,
+     fullUrl: 'https://www.' + elidedText,
+     selection: {start: 0, end: elidedText.length},
+     isFocused: true,
+   }));
+   await microtasksFinished();
+   const input = searchbox.$.input.inputElement;
+   input.focus();
+
+   const keydown = dispatchKeydown({key: 'ArrowLeft', altKey: true});
+   await microtasksFinished();
+
+   assertEquals(0, input.selectionStart);
+   assertEquals(0, input.selectionEnd);
+   assertFalse(keydown.defaultPrevented);
+ });
+
+ // Likewise, ArrowLeft and Home collapse a select-all to the start of the
+ // text, which must scroll into view, e.g. after Ctrl/Cmd+L selected all of
+ // the text without scrolling while the caret was at its end.
+ ['ArrowLeft', 'Home'].forEach(key => {
+   test(`${key}OnSelectedLongUrlScrollsCaretAtStartIntoView`, async () => {
+     await setLongUrlWithCaretAtEnd();
+     const input = searchbox.$.input.inputElement;
+     input.focus();
+     assertTrue(input.scrollLeft > 0);
+     // Select all of the text with Ctrl+L (Cmd+L on Mac), the shortcut to
+     // focus the location bar.
+     dispatchKeydown({key: 'l', ctrlKey: !isMac, metaKey: isMac});
+     await microtasksFinished();
+     await new Promise(resolve => requestAnimationFrame(resolve));
+     assertEquals(0, input.selectionStart);
+     assertEquals(input.value.length, input.selectionEnd);
+     assertTrue(input.scrollLeft > 0);
+
+     dispatchKeydown({key});
+     // Let the input's scroll event sync the #mirror.
+     await microtasksFinished();
+     await new Promise(resolve => requestAnimationFrame(resolve));
+
+     assertEquals(0, input.selectionStart);
+     assertEquals(0, input.selectionEnd);
+     assertEquals(0, input.scrollLeft);
+     const mirror = $$<HTMLElement>(searchbox.$.input, '#mirror');
+     assertTrue(!!mirror);
+     assertEquals(0, mirror.scrollLeft);
    });
  });
 
